@@ -1,10 +1,10 @@
 # StagePass
 
-StagePass is a local portfolio project for ticket sales under contention. PostgreSQL is the durable source of truth and Redis coordinates short-lived seat holds. Phases 0–2 provide infrastructure, authentication, catalog, a booking engine, and a mock payment service. Gateway routing, custom rate limiting, consistent hashing, notifications, and the frontend remain future phases.
+StagePass is a local portfolio project for ticket sales under contention. PostgreSQL is the durable source of truth and Redis coordinates short-lived seat holds. Phases 0–2 provide infrastructure, authentication, catalog, a booking engine, and a mock payment service. A small React interface has been brought forward to make these backend flows easier to explore. Gateway routing, custom rate limiting, consistent hashing, waitlists, notifications, and the complete frontend remain future work.
 
 ## Current status
 
-See [implementation status](docs/IMPLEMENTATION_STATUS.md) and [engineering plan](docs/ENGINEERING_PLAN.md). Phases 0–2 are implemented. Gateway routing/rate limiting, consistent hashing, waitlists/realtime, notification worker, frontend, and load tests remain.
+See [implementation status](docs/IMPLEMENTATION_STATUS.md) and [engineering plan](docs/ENGINEERING_PLAN.md). Phases 0–2 are implemented; the frontend MVP is in progress and pulled forward from Phase 7. Gateway routing/rate limiting, consistent hashing, waitlists/realtime, notifications, full frontend features, and load tests remain.
 
 ## Services in the current phase
 
@@ -14,6 +14,7 @@ See [implementation status](docs/IMPLEMENTATION_STATUS.md) and [engineering plan
 | Catalog service | 8082 | `catalog` schema | `GET /health`, `GET /shows`, `GET /shows/:showId`, `GET /shows/:showId/seats` |
 | Booking nodes (3) | 8091–8093 | `booking` schema | `GET /health`, `GET /shows/:showId/seats`, `POST /shows/:showId/holds`, `PUT /bookings/:id/extend`, `POST /bookings/:id/confirm`, `POST /bookings/:id/cancel`, `GET /bookings` |
 | Payment service | 8090 | `payment` schema | `GET /health`; internal intent, callback status, and refund endpoints |
+| Frontend | 5173 | Browser UI | React/Vite interface for shows, seats, holds, bookings, and mock checkout |
 | PostgreSQL | 5432 | Durable service schemas | Health checked by Compose |
 | Redis | 6379 | Future locks, rate limit state, presence, and events | AOF enabled |
 
@@ -30,6 +31,10 @@ docker compose up --build
 ```
 
 Compose starts PostgreSQL and Redis, runs service-owned Flyway migrations, and starts auth, catalog, payment, and three booking-node instances. Seed shows and seats are inserted by the catalog migration. PostgreSQL and Redis data persist in named volumes.
+
+Open [http://localhost:5173](http://localhost:5173) for the visual interface. It proxies browser API calls through its local Vite server to auth, catalog, and booking node 1, so the APIs do not need browser CORS configuration. The page shows service health, lists shows, displays live seat states, and lets you register/sign in, hold seats, extend/cancel bookings, and simulate success, decline, or delayed payment. It refreshes booking state to show asynchronous payment callbacks. Waitlists, SSE updates, admin dashboards, and gateway routing are not implemented yet.
+
+For frontend-only development outside Docker, use `npm ci && npm run dev` inside `frontend/`; Vite proxies to `localhost:8081`, `localhost:8082`, and `localhost:8091` by default.
 
 Example requests:
 

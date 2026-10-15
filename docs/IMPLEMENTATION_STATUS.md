@@ -18,7 +18,7 @@
 | 4. Consistent hashing and safe rebalancing | Not started | |
 | 5. Waitlist, presence, SSE, and domain events | Not started | |
 | 6. Notification worker | Not started | |
-| 7. Frontend | Not started | |
+| 7. Frontend | In progress (MVP preview pulled forward) | React/Vite UI for show browsing, seat selection, booking lifecycle, and mock checkout; connected through a local API proxy. |
 | 8. Load tests and hardening | Not started | |
 | 9. Documentation and final verification | Not started | |
 
@@ -39,6 +39,15 @@
 - `node scripts/phase2-smoke.mjs`: passed seat contention (one hold/one conflict), hold extension, payment decline/retry, idempotency replay across nodes, payload mismatch rejection, active hold recovery after booking-node restart, and delayed-success refund after cancellation.
 - The smoke test creates a random test user and confirms two seeded seats per run; these rows remain in the local database.
 
+## Frontend preview verification
+
+- `docker compose config -q`: passed with the frontend service added.
+- `npm ci` and `npm run build` in `frontend/`: passed.
+- `npm audit --audit-level=high` in `frontend/`: passed with zero reported vulnerabilities after pinning Vite 6.4.4.
+- `docker compose up --build -d frontend`: frontend container started and reported healthy at port 5173.
+- Requests from inside the frontend container through `/api/auth/health`, `/api/catalog/health`, `/api/booking/health`, and `/api/catalog/shows` returned HTTP 200.
+- Opened the UI in the browser and verified seeded shows, booking-node seat states, and seat selection render. The complete sign-in-to-confirm flow still needs a user walkthrough in the UI.
+
 ## Next step
 
-Implement Phase 3: Java gateway proxying, JWT validation, custom Redis-backed token-bucket/sliding-window rate limiters, metrics, and admin endpoints.
+Walk through sign-in, hold, and mock confirmation in the pulled-forward frontend preview. Then implement Phase 3: Java gateway proxying, JWT validation, custom Redis-backed token-bucket/sliding-window rate limiters, metrics, and admin endpoints. Return to the rest of Phase 7 after waitlist, notification, and gateway APIs are available.

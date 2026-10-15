@@ -37,7 +37,7 @@ Key TTLs, payloads, and atomic scripts will be documented alongside their implem
 
 ## Delivery sequence
 
-Complete one phase at a time: local infrastructure and catalog/auth; booking and payment; gateway and limiters; hash ring and fencing; waitlist and realtime events; notifications; frontend; load tests; final documentation. Each completed phase gets a focused Git commit and a status update. If a local toolchain dependency is missing, source-level work may proceed, but its execution status will be reported as unverified.
+Complete one phase at a time: local infrastructure and catalog/auth; booking and payment; a small frontend preview pulled forward to explore the existing APIs; gateway and limiters; hash ring and fencing; waitlist and realtime events; notifications; then return to complete the frontend; load tests; final documentation. Each completed phase gets a focused Git commit and a status update. If a local toolchain dependency is missing, source-level work may proceed, but its execution status will be reported as unverified.
 
 ## Initial implementation decisions
 
@@ -53,3 +53,9 @@ Complete one phase at a time: local infrastructure and catalog/auth; booking and
 - Booking state is implemented with state classes. Payment failure remains retryable while the Redis hold is active; each retry uses a new confirmation idempotency key.
 - The mock payment API uses deterministic tokens. `pm_test_late_success` persists a callback job and the payment service retries delivery until the booking service acknowledges it. A stale success is compensated with an idempotent refund.
 - The API smoke test deliberately restarts one booking node while a hold is active to verify recovery from shared PostgreSQL and Redis state.
+
+## Frontend preview brought forward
+
+- The initial React/Vite UI surfaces only behavior that already exists: login/registration, seeded show browsing, booking-node seat availability, holds, hold extension/cancellation, mock payment outcomes, and the user's bookings.
+- Vite proxies `/api/auth`, `/api/catalog`, and `/api/booking` to the local Compose services, avoiding direct cross-origin requests from the browser. The preview uses booking node 1; the API state is shared across all three booking nodes.
+- This is a learning and integration surface, not completion of Phase 7. Waitlists, SSE, the admin dashboard, gateway routing, and full realtime seat updates await their backend phases.

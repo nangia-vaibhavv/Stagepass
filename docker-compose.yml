@@ -84,6 +84,23 @@ services:
       timeout: 3s
       retries: 5
 
+  frontend:
+    build: ./frontend
+    environment:
+      AUTH_TARGET: http://auth-service:8081
+      CATALOG_TARGET: http://catalog-service:8082
+      BOOKING_TARGET: http://booking-node-1:8091
+    depends_on:
+      auth-service: { condition: service_healthy }
+      catalog-service: { condition: service_healthy }
+      booking-node-1: { condition: service_started }
+    ports: ["5173:5173"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   payment-service:
     build: ./payment-service
     environment:
