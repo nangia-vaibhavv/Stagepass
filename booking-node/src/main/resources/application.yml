@@ -1,0 +1,28 @@
+server:
+  port: ${SERVER_PORT:8091}
+spring:
+  application:
+    name: booking-node
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/stagepass}
+    username: ${DATABASE_USER:stagepass}
+    password: ${DATABASE_PASSWORD:local-development-only}
+  flyway:
+    enabled: false
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  jackson:
+    default-property-inclusion: non_null
+stagepass:
+  jwt:
+    secret: ${JWT_SECRET}
+    issuer: ${JWT_ISSUER:stagepass}
+  payment:
+    base-url: ${PAYMENT_BASE_URL:http://localhost:8090}
+    service-token: ${PAYMENT_SERVICE_TOKEN:local-payment-service-token}
+  callback-url: ${BOOKING_CALLBACK_URL:http://localhost:8091/internal/payment-callback}
+  catalog:
+    base-url: ${CATALOG_BASE_URL:http://localhost:8082}
+  hold-ttl: 5m

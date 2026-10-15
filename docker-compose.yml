@@ -40,6 +40,20 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
+  migrate-payment:
+    image: flyway/flyway:10.20.1
+    command: ["-url=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stagepass}", "-user=${POSTGRES_USER:-stagepass}", "-password=${POSTGRES_PASSWORD:-local-development-only}", "-schemas=payment", "-defaultSchema=payment", "-locations=filesystem:/flyway/sql", "migrate"]
+    volumes: ["./payment-service/db/migration:/flyway/sql:ro"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  migrate-booking:
+    image: flyway/flyway:10.20.1
+    command: ["-url=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stagepass}", "-user=${POSTGRES_USER:-stagepass}", "-password=${POSTGRES_PASSWORD:-local-development-only}", "-schemas=booking", "-defaultSchema=booking", "-locations=filesystem:/flyway/sql", "migrate"]
+    volumes: ["./booking-node/db/migration:/flyway/sql:ro"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
   auth-service:
     build: ./auth-service
     environment:
@@ -69,6 +83,73 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+  payment-service:
+    build: ./payment-service
+    environment:
+      PORT: 8090
+      DATABASE_URL: ${POSTGRES_URL:-postgres://stagepass:local-development-only@postgres:5432/stagepass}
+      PAYMENT_SERVICE_TOKEN: ${PAYMENT_SERVICE_TOKEN:-local-payment-service-token}
+      MOCK_LATE_CALLBACK_DELAY_MS: ${MOCK_LATE_CALLBACK_DELAY_MS:-5000}
+      PAYMENT_CALLBACK_RETRY_MS: ${PAYMENT_CALLBACK_RETRY_MS:-2000}
+    depends_on:
+      migrate-payment: { condition: service_completed_successfully }
+    ports: ["8090:8090"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  booking-node-1:
+    build: ./booking-node
+    environment: &booking-env
+      SERVER_PORT: 8091
+      NODE_ID: booking-node-1
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stagepass}
+      DATABASE_USER: ${POSTGRES_USER:-stagepass}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-replace-this-local-development-secret-with-at-least-32-characters}
+      JWT_ISSUER: stagepass
+      PAYMENT_BASE_URL: http://payment-service:8090
+      PAYMENT_SERVICE_TOKEN: ${PAYMENT_SERVICE_TOKEN:-local-payment-service-token}
+      BOOKING_CALLBACK_URL: http://booking-node-1:8091/internal/payment-callback
+      CATALOG_BASE_URL: http://catalog-service:8082
+    depends_on:
+      migrate-booking: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      catalog-service: { condition: service_healthy }
+      payment-service: { condition: service_healthy }
+    ports: ["8091:8091"]
+  booking-node-2:
+    build: ./booking-node
+    environment:
+      <<: *booking-env
+      SERVER_PORT: 8092
+      NODE_ID: booking-node-2
+      BOOKING_CALLBACK_URL: http://booking-node-2:8092/internal/payment-callback
+    depends_on:
+      migrate-booking: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      catalog-service: { condition: service_healthy }
+      payment-service: { condition: service_healthy }
+    ports: ["8092:8092"]
+
+  booking-node-3:
+    build: ./booking-node
+    environment:
+      <<: *booking-env
+      SERVER_PORT: 8093
+      NODE_ID: booking-node-3
+      BOOKING_CALLBACK_URL: http://booking-node-3:8093/internal/payment-callback
+    depends_on:
+      migrate-booking: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      catalog-service: { condition: service_healthy }
+      payment-service: { condition: service_healthy }
+    ports: ["8093:8093"]
 
 volumes:
   postgres_data:

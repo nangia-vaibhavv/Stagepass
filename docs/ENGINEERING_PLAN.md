@@ -2,7 +2,7 @@
 
 ## Baseline
 
-The opened repository was empty. This project will start with a new Git history. The available environment currently has Git only; Java 21, Maven, Node.js 20, npm, Docker, and Docker Compose are unavailable.
+The opened repository was empty and started with a new Git history. The current host has Git, Node.js 26/npm 11, and Docker Compose 5.6. Java and Maven are not installed on the host; the booking service builds and runs its Java 21/Maven toolchain inside its pinned Docker build image.
 
 ## Architecture and ownership
 
@@ -45,3 +45,11 @@ Complete one phase at a time: local infrastructure and catalog/auth; booking and
 - Compose will use one PostgreSQL and Redis instance, three booking-node replicas, and health checks.
 - The Java services remain Spring Boot applications; Node services use Express and a maintained PostgreSQL/Redis client.
 - No paid services, cloud infrastructure, broker, ready-made rate limiter, or hash-ring library will be introduced.
+
+## Phase 2 decisions
+
+- A booking node acquires each selected seat with Redis `SET NX PX` semantics and a per-booking owner token. Lua scripts release or extend only matching tokens.
+- PostgreSQL rows hold booking state, transition history, payment attempts, and confirmation idempotency. A primary key on `(show_id, seat_id)` in `booking.confirmed_seats` is the final duplicate-sale guard.
+- Booking state is implemented with state classes. Payment failure remains retryable while the Redis hold is active; each retry uses a new confirmation idempotency key.
+- The mock payment API uses deterministic tokens. `pm_test_late_success` persists a callback job and the payment service retries delivery until the booking service acknowledges it. A stale success is compensated with an idempotent refund.
+- The API smoke test deliberately restarts one booking node while a hold is active to verify recovery from shared PostgreSQL and Redis state.
