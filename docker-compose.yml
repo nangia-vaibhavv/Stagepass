@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stagepass}
+      POSTGRES_USER: ${POSTGRES_USER:-stagepass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+    ports: ["5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7.4.1-alpine
+    ports: ["6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  migrate-auth:
+    image: flyway/flyway:10.20.1
+    command: ["-url=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stagepass}", "-user=${POSTGRES_USER:-stagepass}", "-password=${POSTGRES_PASSWORD:-local-development-only}", "-schemas=auth", "-defaultSchema=auth", "-locations=filesystem:/flyway/sql", "migrate"]
+    volumes: ["./auth-service/db/migration:/flyway/sql:ro"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  migrate-catalog:
+    image: flyway/flyway:10.20.1
+    command: ["-url=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stagepass}", "-user=${POSTGRES_USER:-stagepass}", "-password=${POSTGRES_PASSWORD:-local-development-only}", "-schemas=catalog", "-defaultSchema=catalog", "-locations=filesystem:/flyway/sql", "migrate"]
+    volumes: ["./catalog-service/db/migration:/flyway/sql:ro"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  auth-service:
+    build: ./auth-service
+    environment:
+      PORT: 8081
+      DATABASE_URL: ${POSTGRES_URL:-postgres://stagepass:local-development-only@postgres:5432/stagepass}
+      JWT_SECRET: ${JWT_SECRET:-replace-this-local-development-secret-with-at-least-32-characters}
+      JWT_ISSUER: stagepass
+    depends_on:
+      migrate-auth: { condition: service_completed_successfully }
+    ports: ["8081:8081"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  catalog-service:
+    build: ./catalog-service
+    environment:
+      PORT: 8082
+      DATABASE_URL: ${POSTGRES_URL:-postgres://stagepass:local-development-only@postgres:5432/stagepass}
+    depends_on:
+      migrate-catalog: { condition: service_completed_successfully }
+    ports: ["8082:8082"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8082/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:

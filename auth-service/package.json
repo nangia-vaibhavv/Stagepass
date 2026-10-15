@@ -1,0 +1,8 @@
+{
+  "name": "stagepass-auth-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {"start": "node src/server.js", "test": "node --test"},
+  "dependencies": {"bcryptjs": "2.4.3", "express": "4.21.2", "jsonwebtoken": "9.0.2", "pg": "8.13.1"}
+}
