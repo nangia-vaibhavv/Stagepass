@@ -27,6 +27,8 @@ public class SecurityConfig {
         return http.csrf(csrf -> csrf.disable())
             .authorizeHttpRequests(auth -> auth.requestMatchers("/health").permitAll()
                 .requestMatchers(HttpMethod.GET, "/shows/*/seats").permitAll()
+                .requestMatchers(HttpMethod.GET, "/shows/*/events").permitAll()
+                .requestMatchers(HttpMethod.GET, "/shows/*/presence").permitAll()
                 .requestMatchers(HttpMethod.POST, "/internal/payment-callback").permitAll().anyRequest().authenticated())
             .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults())).build();
     }

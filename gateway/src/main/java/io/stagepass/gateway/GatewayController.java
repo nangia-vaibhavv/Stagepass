@@ -1,6 +1,11 @@
 package io.stagepass.gateway;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.ServletOutputStream;
+import java.io.InputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
@@ -14,6 +19,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -52,6 +59,38 @@ public class GatewayController {
         if (bookingNodes.isEmpty()) return gatewayError(HttpStatus.SERVICE_UNAVAILABLE, "BOOKING_UNAVAILABLE");
         int nodeIndex = Math.floorMod(nextNode.getAndIncrement(), bookingNodes.size());
         return forward(request, body, "/api/booking", bookingNodes.get(nodeIndex));
+    }
+
+    @GetMapping(value = "/api/booking/shows/{showId}/events", produces = "text/event-stream")
+    public void bookingEvents(@PathVariable String showId, HttpServletRequest request, HttpServletResponse response) throws IOException {
+        if (bookingNodes.isEmpty()) { response.sendError(HttpStatus.SERVICE_UNAVAILABLE.value(), "BOOKING_UNAVAILABLE"); return; }
+        int nodeIndex = Math.floorMod(nextNode.getAndIncrement(), bookingNodes.size());
+        String baseUrl = bookingNodes.get(nodeIndex).replaceAll("/$", "");
+        String suffix = "/shows/" + java.net.URLEncoder.encode(showId, StandardCharsets.UTF_8) + "/events";
+        String query = request.getQueryString() == null ? "" : "?" + request.getQueryString();
+        URI uri = URI.create(baseUrl + suffix + query);
+        String requestId = UUID.randomUUID().toString();
+        try {
+            client.get().uri(uri).headers(headers -> copyRequestHeaders(request, headers, requestId)).exchange((outgoing, incoming) -> {
+                response.setStatus(incoming.getStatusCode().value());
+                response.setHeader("Content-Type", "text/event-stream;charset=UTF-8");
+                response.setHeader("Cache-Control", "no-cache, no-transform");
+                response.setHeader("X-Request-Id", requestId);
+                incoming.getHeaders().forEach((name, values) -> {
+                    if (!HOP_BY_HOP.contains(name.toLowerCase()) && !name.equalsIgnoreCase("Content-Length") && !name.equalsIgnoreCase("Content-Type"))
+                        values.forEach(value -> response.addHeader(name, value));
+                });
+                ServletOutputStream output = response.getOutputStream();
+                try (InputStream input = incoming.getBody()) {
+                    byte[] buffer = new byte[4096];
+                    int count;
+                    while ((count = input.read(buffer)) >= 0) { output.write(buffer, 0, count); output.flush(); }
+                }
+                return null;
+            });
+        } catch (RuntimeException error) {
+            if (!response.isCommitted()) response.sendError(HttpStatus.BAD_GATEWAY.value(), "UPSTREAM_UNAVAILABLE");
+        }
     }
 
     private ResponseEntity<byte[]> forward(HttpServletRequest request, byte[] body, String prefix, String baseUrl) {

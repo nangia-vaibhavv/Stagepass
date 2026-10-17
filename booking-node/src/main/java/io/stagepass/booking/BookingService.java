@@ -21,6 +21,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -34,6 +35,9 @@ public class BookingService {
     private static final DefaultRedisScript<Long> EXTEND_HOLD = new DefaultRedisScript<>(
         "for i=1,#KEYS do if redis.call('GET', KEYS[i]) ~= ARGV[1] then return 0 end end " +
         "for i=1,#KEYS do redis.call('PEXPIRE', KEYS[i], ARGV[2]) end return 1", Long.class);
+    private static final DefaultRedisScript<Long> CLAIM_WAITLIST_SEATS = new DefaultRedisScript<>(
+        "for i=1,#KEYS do if redis.call('GET',KEYS[i]) ~= ARGV[1] then return 0 end end " +
+        "for i=1,#KEYS do redis.call('SET',KEYS[i],ARGV[2],'PX',ARGV[3]) end return 1", Long.class);
 
     private final JdbcTemplate jdbc;
     private final NamedParameterJdbcTemplate namedJdbc;
@@ -43,14 +47,15 @@ public class BookingService {
     private final Duration holdTtl;
     private final String paymentToken;
     private final String callbackUrl;
+    private final RealtimeService realtime;
 
     public BookingService(JdbcTemplate jdbc, NamedParameterJdbcTemplate namedJdbc, StringRedisTemplate redis,
                           RestClient paymentClient, ObjectMapper mapper,
                           @Value("${stagepass.hold-ttl:5m}") Duration holdTtl,
                           @Value("${stagepass.payment.service-token}") String paymentToken,
-                          @Value("${stagepass.callback-url}") String callbackUrl) {
+                          @Value("${stagepass.callback-url}") String callbackUrl, RealtimeService realtime) {
         this.jdbc = jdbc; this.namedJdbc = namedJdbc; this.redis = redis; this.paymentClient = paymentClient;
-        this.mapper = mapper; this.holdTtl = holdTtl; this.paymentToken = paymentToken; this.callbackUrl = callbackUrl;
+        this.mapper = mapper; this.holdTtl = holdTtl; this.paymentToken = paymentToken; this.callbackUrl = callbackUrl; this.realtime = realtime;
     }
 
     public record HoldResult(UUID bookingId, String showId, List<String> seatIds, String status, Instant expiresAt, int amountCents, String currency) {}
@@ -106,7 +111,49 @@ public class BookingService {
                 bookingId, showId, seat.seatId(), seat.priceCents());
             String currency = jdbc.queryForObject("SELECT currency FROM catalog.shows WHERE id=?", String.class, showId);
             int total = seats.stream().mapToInt(SeatPrice::priceCents).sum();
+            realtime.recordEvent("seat.held", bookingId.toString(), Map.of("showId", showId, "seatIds", requestedSeats));
             return new HoldResult(bookingId, showId, seats.stream().map(SeatPrice::seatId).toList(), "HELD", expiresAt, total, currency);
+        } catch (RuntimeException error) {
+            acquired.forEach(key -> release(key, redisValue));
+            throw error;
+        }
+    }
+
+    @Transactional
+    public HoldResult holdFromWaitlistOffer(String showId, String userId, RealtimeService.WaitlistOffer offer) {
+        List<String> requestedSeats = offer.seatIds();
+        if (requestedSeats.isEmpty() || requestedSeats.size() > MAX_SEATS) throw BookingException.conflict("INVALID_WAITLIST_OFFER", "The seat offer is invalid.");
+        var seats = namedJdbc.query(
+            "SELECT seat.id,sec.price_cents FROM catalog.shows sh JOIN catalog.sections sec ON sec.venue_id=sh.venue_id " +
+                "JOIN catalog.seats seat ON seat.section_id=sec.id WHERE sh.id=:showId AND seat.id IN (:seatIds) ORDER BY seat.id",
+            new MapSqlParameterSource().addValue("showId", showId).addValue("seatIds", requestedSeats),
+            (rs, row) -> new SeatPrice(rs.getString("id"), rs.getInt("price_cents")));
+        if (seats.size() != requestedSeats.size()) throw BookingException.conflict("INVALID_WAITLIST_OFFER", "One or more offered seats no longer exist.");
+        Integer confirmed = namedJdbc.queryForObject(
+            "SELECT count(*) FROM booking.confirmed_seats WHERE show_id=:showId AND seat_id IN (:seatIds)",
+            new MapSqlParameterSource().addValue("showId", showId).addValue("seatIds", requestedSeats), Integer.class);
+        if (confirmed != null && confirmed > 0) throw BookingException.conflict("SEAT_UNAVAILABLE", "One or more offered seats have already been sold.");
+
+        UUID bookingId = UUID.randomUUID();
+        UUID holdToken = UUID.randomUUID();
+        String redisValue = bookingId + ":" + holdToken;
+        String offerValue = "WAITLIST:" + offer.offerId() + ":" + sha256(userId);
+        List<String> keys = requestedSeats.stream().map(seat -> holdKey(showId, seat)).toList();
+        List<String> acquired = new ArrayList<>();
+        try {
+            Long claimed = redis.execute(CLAIM_WAITLIST_SEATS, keys, offerValue, redisValue, Long.toString(holdTtl.toMillis()));
+            if (!Long.valueOf(1).equals(claimed)) throw BookingException.conflict("WAITLIST_OFFER_EXPIRED", "The offered seats are no longer reserved.");
+            acquired.addAll(keys);
+            Instant expiresAt = Instant.now().plus(holdTtl);
+            jdbc.update("INSERT INTO booking.sessions(id,show_id,user_id,state,hold_token,expires_at) VALUES(?,?,?,'HELD',?,?)",
+                bookingId, showId, userId, holdToken, Timestamp.from(expiresAt));
+            jdbc.update("INSERT INTO booking.transitions(booking_id,from_state,to_state,reason) VALUES(?,NULL,'HELD','waitlist offer accepted')", bookingId);
+            for (SeatPrice seat : seats) jdbc.update("INSERT INTO booking.session_seats(booking_id,show_id,seat_id,price_cents) VALUES(?,?,?,?)",
+                bookingId, showId, seat.seatId(), seat.priceCents());
+            String currency = jdbc.queryForObject("SELECT currency FROM catalog.shows WHERE id=?", String.class, showId);
+            int total = seats.stream().mapToInt(SeatPrice::priceCents).sum();
+            realtime.recordEvent("seat.held", bookingId.toString(), Map.of("showId", showId, "seatIds", requestedSeats));
+            return new HoldResult(bookingId, showId, requestedSeats, "HELD", expiresAt, total, currency);
         } catch (RuntimeException error) {
             acquired.forEach(key -> release(key, redisValue));
             throw error;
@@ -190,6 +237,7 @@ public class BookingService {
         }
         BookingState confirmed = pending.paymentSucceeded();
         Session confirmedSession = persistTransition(pendingSession, pending, confirmed, "payment succeeded and seats committed");
+        realtime.recordEvent("booking.confirmed", bookingId.toString(), Map.of("showId", session.showId(), "seatIds", seatIds));
         ConfirmOutcome outcome = new ConfirmOutcome(bookingId, "CONFIRMED", payment.body().paymentId(), seatIds, null, amountCents, currency, 200);
         completeIdempotency(userId, idempotencyKey, outcome);
         scheduleRelease(confirmedSession, seatIds);
@@ -203,6 +251,7 @@ public class BookingService {
         BookingState old = BookingStates.from(session.state());
         Session cancelled = persistTransition(session, old, old.cancel(), "cancelled by owner");
         List<String> seatIds = jdbc.query("SELECT seat_id FROM booking.session_seats WHERE booking_id=?", (rs, row) -> rs.getString(1), bookingId);
+        realtime.recordEvent("booking.cancelled", bookingId.toString(), Map.of("showId", session.showId(), "seatIds", seatIds));
         scheduleRelease(cancelled, seatIds);
         return Map.of("bookingId", bookingId, "status", cancelled.state());
     }
@@ -223,6 +272,23 @@ public class BookingService {
             Timestamp.from(newExpiry), bookingId, session.version());
         if (changed != 1) throw BookingException.conflict("BOOKING_CONCURRENT_UPDATE", "Booking changed while this request was being applied.");
         return newExpiry;
+    }
+
+    @Scheduled(fixedDelayString = "${stagepass.booking.expiry-sweep-ms:5000}")
+    @Transactional
+    public void expireDueBookings() {
+        List<Session> due = jdbc.query(
+            "SELECT id,show_id,user_id,state,hold_token,current_payment_id,expires_at,version FROM booking.sessions " +
+                "WHERE state IN ('HELD','PAYMENT_FAILED','PAYMENT_PENDING') AND expires_at<=now() " +
+                "ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED",
+            (rs, row) -> new Session(rs.getObject("id", UUID.class), rs.getString("show_id"), rs.getString("user_id"), rs.getString("state"),
+                rs.getObject("hold_token", UUID.class), rs.getObject("current_payment_id", UUID.class), rs.getTimestamp("expires_at").toInstant(), rs.getLong("version")));
+        for (Session session : due) {
+            BookingState old = BookingStates.from(session.state());
+            Session expired = persistTransition(session, old, old.timeout(), "hold expired by background cleanup");
+            List<String> seats = jdbc.query("SELECT seat_id FROM booking.session_seats WHERE booking_id=? ORDER BY seat_id", (rs, row) -> rs.getString(1), session.id());
+            scheduleRelease(expired, seats);
+        }
     }
 
     @Transactional
@@ -254,6 +320,7 @@ public class BookingService {
             if (currentAttempt && "PAYMENT_PENDING".equals(session.state())) {
                 if (Instant.now().isAfter(session.expiresAt())) {
                     session = persistTransition(session, BookingStates.from(session.state()), BookingStates.from(session.state()).timeout(), "payment failed after hold expiry");
+                    scheduleRelease(session, seatIds);
                     jdbc.update("UPDATE booking.payment_attempts SET status='FAILED',updated_at=now() WHERE payment_id=?", paymentId);
                     completeIdempotency(attempt.userId(), attempt.idempotencyKey(), outcome(session, paymentId, seatIds, "PAYMENT_FAILED", "HOLD_EXPIRED", 410));
                 } else {
@@ -276,8 +343,10 @@ public class BookingService {
             }
         }
         if (!active) {
-            if (currentAttempt && "PAYMENT_PENDING".equals(session.state()) && Instant.now().isAfter(session.expiresAt()))
+            if (currentAttempt && "PAYMENT_PENDING".equals(session.state()) && Instant.now().isAfter(session.expiresAt())) {
                 session = persistTransition(session, BookingStates.from(session.state()), BookingStates.from(session.state()).timeout(), "payment succeeded after hold expiry");
+                scheduleRelease(session, seatIds);
+            }
             refund(paymentId, "late:" + sha256(paymentId.toString()).substring(0, 32));
             jdbc.update("UPDATE booking.payment_attempts SET status='REFUNDED',updated_at=now() WHERE payment_id=?", paymentId);
             String state = session.state().equals("EXPIRED") ? "EXPIRED" : session.state();
@@ -300,6 +369,7 @@ public class BookingService {
             return;
         }
         Session confirmed = persistTransition(session, BookingStates.from(session.state()), BookingStates.from(session.state()).paymentSucceeded(), "asynchronous payment succeeded");
+        realtime.recordEvent("booking.confirmed", bookingId.toString(), Map.of("showId", session.showId(), "seatIds", seatIds));
         jdbc.update("UPDATE booking.payment_attempts SET status='SUCCEEDED',updated_at=now() WHERE payment_id=?", paymentId);
         completeIdempotency(attempt.userId(), attempt.idempotencyKey(), outcome(confirmed, paymentId, seatIds, "CONFIRMED", null, 200));
         scheduleRelease(confirmed, seatIds);
@@ -389,7 +459,17 @@ public class BookingService {
 
     private void scheduleRelease(Session session, List<String> seats) {
         String value = session.id() + ":" + session.holdToken();
-        Runnable action = () -> seats.forEach(seat -> release(holdKey(session.showId(), seat), value));
+        if ("EXPIRED".equals(session.state())) realtime.recordEvent("booking.expired", session.id().toString(), Map.of("showId", session.showId(), "seatIds", seats));
+        seats.forEach(seat -> realtime.recordEvent("CONFIRMED".equals(session.state()) ? "seat.booked" : "seat.released",
+            session.id().toString(), Map.of("showId", session.showId(), "seatId", seat)));
+        Runnable action = () -> seats.forEach(seat -> {
+            String key = holdKey(session.showId(), seat);
+            boolean unlocked = release(key, value);
+            Boolean confirmed = jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM booking.confirmed_seats WHERE show_id=? AND seat_id=?)",
+                Boolean.class, session.showId(), seat);
+            if (!"CONFIRMED".equals(session.state()) && !Boolean.TRUE.equals(confirmed) && (unlocked || !Boolean.TRUE.equals(redis.hasKey(key))))
+                realtime.seatReleased(session.showId(), seat);
+        });
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override public void afterCommit() { action.run(); }
@@ -397,7 +477,7 @@ public class BookingService {
         } else action.run();
     }
 
-    private void release(String key, String value) { redis.execute(RELEASE_HOLD, List.of(key), value); }
+    private boolean release(String key, String value) { return Long.valueOf(1).equals(redis.execute(RELEASE_HOLD, List.of(key), value)); }
     private String holdKey(String showId, String seatId) { return "stagepass:hold:" + showId + ":" + seatId; }
     private String sha256(String input) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(input.getBytes(StandardCharsets.UTF_8))); }

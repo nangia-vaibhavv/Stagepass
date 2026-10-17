@@ -53,6 +53,7 @@ services:
     volumes: ["./booking-node/db/migration:/flyway/sql:ro"]
     depends_on:
       postgres: { condition: service_healthy }
+      migrate-catalog: { condition: service_completed_successfully }
 
   auth-service:
     build: ./auth-service

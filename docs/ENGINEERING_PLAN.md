@@ -6,7 +6,7 @@ The opened repository was empty and started with a new Git history. The current 
 
 ## Architecture and ownership
 
-- `gateway` (Java/Spring Boot): public HTTP entry point, JWT verification, custom Redis-backed rate-limit strategies, and consistent-hash routing to booking nodes.
+- `gateway` (Java/Spring Boot): public HTTP entry point, JWT verification, custom Redis-backed rate-limit strategies, and round-robin routing to booking nodes. Consistent-hash routing is deferred.
 - `booking-node` (Java/Spring Boot, three containers): seat holds, booking lifecycle, durable idempotency, payment callback handling, waitlist, SSE, and domain events.
 - `catalog-service` (Node/Express): shows, venues, sections, seats, and availability read APIs; owns `catalog` schema.
 - `auth-service` (Node/Express): registration and login; owns `auth` schema.
@@ -21,24 +21,23 @@ The opened repository was empty and started with a new Git history. The current 
 2. Redis hold release and extension require the exact unexpired owner token and run atomically.
 3. Confirmation idempotency is persisted and uniquely keyed in PostgreSQL; the key is bound to a canonical request digest.
 4. Payment callbacks are idempotent, and late success after a terminal booking state triggers compensation rather than a second confirmation.
-5. Show ownership metadata carries an epoch; state-changing requests must validate the current epoch against durable/shared metadata.
-6. Stream delivery is at least once; notification persistence makes duplicate deliveries harmless.
+5. Stream delivery is at least once; consumers must be idempotent because a published event can be delivered more than once.
 
 ## Redis key conventions
 
 - `stagepass:hold:{showId}:{seatId}` — token-valued expiring seat lock.
 - `stagepass:presence:{showId}:{viewerId}` — expiring viewer heartbeat.
-- `stagepass:waitlist:{showId}` — ordered waitlist entries.
+- `stagepass:waitlist:{showId}` — ordered, pseudonymous show-wide queue; a user requests 1–8 seats and a short Redis reservation assigns the next available seats.
 - `stagepass:ratelimit:{policy}:{identityHash}` — strategy-specific limiter state; raw user IDs and IP addresses are not stored in the key.
 - `stagepass:ratelimit:metrics` — aggregate allowed/blocked counters by policy.
-- `stagepass:ownership:{showId}` — current owner and fencing epoch when ownership coordination uses Redis.
 - `stagepass:events` — domain event stream; consumer group `notification-workers`.
+- `stagepass:presence:{showId}` — sorted set of hashed user IDs and last-heartbeat timestamps.
 
 Key TTLs, payloads, and atomic scripts will be documented alongside their implementations.
 
 ## Delivery sequence
 
-Complete one phase at a time: local infrastructure and catalog/auth; booking and payment; a small frontend preview pulled forward to explore the existing APIs; gateway and limiters; hash ring and fencing; waitlist and realtime events; notifications; then return to complete the frontend; load tests; final documentation. Each completed phase gets a focused Git commit and a status update. If a local toolchain dependency is missing, source-level work may proceed, but its execution status will be reported as unverified.
+Complete one phase at a time: local infrastructure and catalog/auth; booking and payment; a small frontend preview pulled forward to explore the existing APIs; gateway and limiters; waitlist and realtime events; notifications; then return to complete the frontend; load tests; final documentation. Phase 4 hash-ring routing is currently deferred. Each completed phase gets a focused Git commit and a status update. If a local toolchain dependency is missing, source-level work may proceed, but its execution status will be reported as unverified.
 
 ## Initial implementation decisions
 
@@ -59,7 +58,7 @@ Complete one phase at a time: local infrastructure and catalog/auth; booking and
 
 - The initial React/Vite UI surfaces only behavior that already exists: login/registration, seeded show browsing, booking-node seat availability, holds, hold extension/cancellation, mock payment outcomes, and the user's bookings.
 - Vite proxies `/api/auth`, `/api/catalog`, and `/api/booking` to the local Compose services, avoiding direct cross-origin requests from the browser. The preview uses booking node 1; the API state is shared across all three booking nodes.
-- This is a learning and integration surface, not completion of Phase 7. Waitlists, SSE, the admin dashboard, gateway routing, and full realtime seat updates await their backend phases.
+- This is a learning and integration surface, not completion of Phase 7. Admin dashboard and full realtime seat updates await further frontend work.
 
 ## Phase 3 decisions
 
@@ -68,3 +67,16 @@ Complete one phase at a time: local infrastructure and catalog/auth; booking and
 - Rate limiting is a Strategy interface with token-bucket and weighted sliding-window-counter implementations. Redis Lua scripts make state updates atomic across gateway instances. Policies and thresholds are configured in YAML.
 - The weighted sliding-window counter estimates recent usage as `current + previous * (1 - elapsed/window)`. It is an approximation of a rolling window; token bucket gives burst capacity and continuous refill.
 - Aggregate allowed/blocked counts are kept in a Redis hash and exposed only to admin JWTs. Response headers report rule, limit, remaining count, and reset time; HTTP 429 includes Retry-After.
+
+## Phase 4 scope decision
+
+- Consistent-hash ownership and fencing were removed from the current local implementation at the user's request. The gateway uses the Phase 3 round-robin router. The already-applied Flyway V3 migration is retained as an immutable local database migration; its ownership table is unused by the current code.
+
+## Phase 5 decisions
+
+- Waitlist membership is a Redis sorted set per show, ordered by an atomic sequence counter. Each pseudonymous user entry records the requested quantity (1–8). When enough seats are available, the allocator chooses the next available seats and reserves them in Redis for the 60-second offer window.
+- `OfferNext`, `RetryCurrent`, `RoundRobin`, and `ReleaseToPool` implement queue selection behavior. Acceptance converts the waitlist seat reservations into the standard five-minute booking hold.
+- Presence is a per-show sorted set of hashed user IDs and heartbeat timestamps. A viewer counts as active for 30 seconds; the API response is an approximate point-in-time count.
+- Expired booking holds are transitioned by a periodic worker using PostgreSQL row locks and `SKIP LOCKED`, then released and offered to the waitlist if the seat is not confirmed.
+- Booking events are written to a PostgreSQL outbox in the same transaction as lifecycle changes, then relayed to Redis Stream `stagepass:events` and Redis Pub/Sub for SSE. Delivery is at least once; SSE reconnect does not replay history, so clients refresh their seat snapshot.
+- The wait estimate uses waitlist acceptances observed during the previous 15 minutes. With no samples, it assumes one acceptance per minute; this is a rough estimate.

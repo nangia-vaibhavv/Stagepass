@@ -1,10 +1,10 @@
 # StagePass
 
-StagePass is a local portfolio project for ticket sales under contention. PostgreSQL is the durable source of truth and Redis coordinates short-lived seat holds and distributed rate limits. Phases 0–3 provide infrastructure, authentication, catalog, a booking engine, mock payments, a public API gateway, and a React interface for exploring the booking flow. Consistent hashing, waitlists, notifications, and the remaining frontend features are future work.
+StagePass is a local portfolio project for ticket sales under contention. PostgreSQL is the durable source of truth; Redis coordinates short-lived seat holds, distributed rate limits, presence, and waitlists. Phases 0–3 provide infrastructure, authentication, catalog, a booking engine, mock payments, a public API gateway, and a React interface. Phase 5 realtime and show-wide waitlist work is in progress; consistent-hash routing (Phase 4) is deferred.
 
 ## Current status
 
-See [implementation status](docs/IMPLEMENTATION_STATUS.md) and [engineering plan](docs/ENGINEERING_PLAN.md). Phases 0–3 are implemented; the frontend MVP is in progress and pulled forward from Phase 7. Consistent hashing, waitlists/realtime, notifications, full frontend features, and load tests remain.
+See the [next-assistant handoff](docs/HANDOFF_NEXT_ASSISTANT.md), [implementation status](docs/IMPLEMENTATION_STATUS.md), [engineering plan](docs/ENGINEERING_PLAN.md), and the [Phase 5 API contract](docs/PHASE5_API.md). Phases 0–3 are implemented; Phase 5 backend and frontend work is in progress. Phase 4 routing is deferred. Notifications and load tests remain.
 
 ## Services in the current phase
 
@@ -17,7 +17,7 @@ See [implementation status](docs/IMPLEMENTATION_STATUS.md) and [engineering plan
 | Payment service | 8090 | `payment` schema | `GET /health`; internal intent, callback status, and refund endpoints |
 | Frontend | 5173 | Browser UI | React/Vite interface for shows, seats, holds, bookings, and mock checkout |
 | PostgreSQL | 5432 | Durable service schemas | Health checked by Compose |
-| Redis | 6379 | Booking holds and rate-limit state; presence and events are planned | AOF enabled |
+| Redis | 6379 | Booking holds, rate-limit state, presence, waitlists, and event stream | AOF enabled |
 
 Registration accepts `{ "email", "password", "displayName" }`. Login accepts `{ "email", "password" }` and returns a one-hour HS256 JWT. A local-only admin account is seeded as `demo@stagepass.local` / `stagepass-demo`; change or remove it before exposing the service outside a local machine. Catalog listing supports `limit`, `cursor`, and `status`. Show and seat responses use deterministic seed IDs such as `show-aurora`.
 
@@ -33,7 +33,9 @@ docker compose up --build
 
 Compose starts PostgreSQL and Redis, runs service-owned Flyway migrations, and starts auth, catalog, payment, the gateway, and three booking-node instances. Seed shows and seats are inserted by the catalog migration. PostgreSQL and Redis data persist in named volumes.
 
-Open [http://localhost:5173](http://localhost:5173) for the visual interface. It proxies browser API calls through Vite to the public gateway at port 8080. The page shows service health, lists shows, displays live seat states, and lets you register/sign in, hold seats, extend/cancel bookings, and simulate success, decline, or delayed payment. It refreshes booking state to show asynchronous payment callbacks. Waitlists, SSE updates, and the admin dashboard are not implemented yet.
+Open [http://localhost:5173](http://localhost:5173) for the visual interface. It proxies browser API calls through Vite to the public gateway at port 8080. The page shows service health, lists shows, displays seat states, and lets you register/sign in, hold seats, extend/cancel bookings, and simulate success, decline, or delayed payment. If you try to hold seats while signed out, it prompts you to sign in or create an account. The selected show's “Audience & waitlist” panel shows the active viewer count, lets a signed-in user request 1–8 seats in the show-wide queue, and displays a live offer for whichever seats become available.
+
+To test a two-seat offer, select **Boundary Waitlist Demo**, which starts with 57 confirmed seats and exactly three available. Use two separate browser profiles and create two different local accounts. In profile A, hold those three available seats. In profile B, request **2 seats** in the show's waitlist panel. Back in profile A, cancel the hold. Profile B should receive an offer for any two of the released seats; click **Accept offer**, then pay from **Bookings**. The offer reserves its seats for 60 seconds, and acceptance converts them to the normal five-minute booking hold. Keep both profiles open and signed in while testing; browser tabs in one profile share the same login session.
 
 For frontend-only development outside Docker, use `npm ci && npm run dev` inside `frontend/`; Vite proxies API calls to `localhost:8080` by default.
 
@@ -102,12 +104,24 @@ node scripts/phase2-smoke.mjs
 
 The smoke test races two authenticated users for one seat, exercises hold extension, a declined payment and retry, cross-node idempotency, a booking-node restart with an active hold, then cancels a pending payment and verifies the delayed success was refunded and acknowledged. It creates a random test account and confirms two seats in the local database each run; use seeded local data only. The Java state-machine suite runs during `docker compose build booking-node-1` and uses JUnit 5.
 
+## Phase 5 API preview
+
+Once the stack is rebuilt, the new endpoints support presence heartbeats, show-wide multi-seat waitlist requests, assigned seat offers, admin offer-mode selection, and SSE. Full request/response details are in [docs/PHASE5_API.md](docs/PHASE5_API.md). The local smoke script is:
+
+```sh
+docker compose up --build -d
+node scripts/phase5-smoke.mjs
+```
+
+Presence should be sent every 10 seconds and counts only viewers active in the last 30 seconds. Waitlist offers expire after 60 seconds; acceptance still goes through the normal seat-hold lock. SSE is a best-effort live channel: reconnecting clients should refresh the seat snapshot. Booking domain events are written to a PostgreSQL outbox and relayed at least once to Redis Stream `stagepass:events`.
+
 ## Data ownership
 
 - `auth-service/db/migration` owns `auth.users`.
 - `catalog-service/db/migration` owns `catalog.venues`, `catalog.shows`, `catalog.sections`, and `catalog.seats`.
 - `booking-node/db/migration` owns booking sessions, selected seats, confirmed seats, transitions, and durable idempotency records.
 - `booking-node/db/migration` also owns durable payment attempts used to deduplicate callbacks.
+- `booking-node/db/migration` owns the transactional event outbox and the confirmed-seat fixture for the Boundary Waitlist Demo.
 - `payment-service/db/migration` owns mock payment intents, refund state, and retryable callback delivery metadata.
 - Notification schema is reserved for a later phase.
 

@@ -31,6 +31,8 @@ public class SecurityConfig {
                 .requestMatchers("/admin/**").hasRole("admin")
                 .requestMatchers(HttpMethod.GET, "/api/booking/health").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/booking/shows/*/seats").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/booking/shows/*/events").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/booking/shows/*/presence").permitAll()
                 .requestMatchers("/api/booking/**").authenticated()
                 .anyRequest().permitAll())
             .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))

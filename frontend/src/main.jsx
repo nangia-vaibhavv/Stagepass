@@ -47,6 +47,11 @@ function App() {
   const [form, setForm] = useState({ email: 'demo@stagepass.local', password: 'stagepass-demo', displayName: '' });
   const [paymentToken, setPaymentToken] = useState('pm_test_success');
   const [services, setServices] = useState({ auth: false, catalog: false, booking: false });
+  const [presence, setPresence] = useState(0);
+  const [liveEvents, setLiveEvents] = useState([]);
+  const [waitlistInfo, setWaitlistInfo] = useState(null);
+  const [waitlistQuantity, setWaitlistQuantity] = useState(1);
+  const [loginPrompt, setLoginPrompt] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
 
@@ -95,7 +100,50 @@ function App() {
     return () => window.clearInterval(timer);
   }, [loadShows]);
   useEffect(() => { if (selectedShow) loadSeats(selectedShow.id); }, [selectedShow, loadSeats]);
+  useEffect(() => { setWaitlistInfo(null); setWaitlistQuantity(1); }, [selectedShow?.id, token]);
+  useEffect(() => {
+    if (!selectedShow) return undefined;
+    let alive = true;
+    const showId = encodeURIComponent(selectedShow.id);
+    const refreshPresence = async () => {
+      try {
+        if (token) await api(`/api/booking/shows/${showId}/presence`, { method: 'POST', token });
+        const data = await api(`/api/booking/shows/${showId}/presence`);
+        if (alive) setPresence(data.activeViewers || 0);
+      } catch { /* Show page remains usable if live presence is unavailable. */ }
+    };
+    setLiveEvents([]);
+    refreshPresence();
+    const timer = window.setInterval(refreshPresence, 10000);
+    const source = new EventSource(`/api/booking/shows/${showId}/events`);
+    const eventTypes = ['seat.held', 'seat.booked', 'booking.confirmed', 'booking.cancelled', 'booking.expired', 'seat.released', 'waitlist.offered', 'waitlist.offer_expired', 'presence.count_updated'];
+    const handlers = eventTypes.map(type => {
+      const handler = event => {
+        let payload = {};
+        try { payload = JSON.parse(event.data); } catch { /* Keep the event name if payload is malformed. */ }
+        const details = payload.data || {};
+        setLiveEvents(current => [{ id: `${Date.now()}-${Math.random()}`, type, details }, ...current].slice(0, 8));
+        if (type.startsWith('seat.') || type.startsWith('booking.') || type === 'waitlist.offered' || type === 'waitlist.offer_expired') loadSeats(selectedShow.id);
+      };
+      source.addEventListener(type, handler);
+      return [type, handler];
+    });
+    return () => { alive = false; window.clearInterval(timer); handlers.forEach(([type, handler]) => source.removeEventListener(type, handler)); source.close(); };
+  }, [selectedShow, token, loadSeats]);
   useEffect(() => { loadBookings(); }, [token]);
+  useEffect(() => {
+    if (!selectedShow || !token) { setWaitlistInfo(null); return; }
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const data = await api(`/api/booking/shows/${encodeURIComponent(selectedShow.id)}/waitlist/me`, { token });
+        if (alive) setWaitlistInfo(data);
+      } catch (error) { if (alive && error.status === 404) setWaitlistInfo(null); }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 2000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [selectedShow, token]);
   useEffect(() => {
     if (!token) return undefined;
     const timer = window.setInterval(loadBookings, 2500);
@@ -129,7 +177,7 @@ function App() {
   }
 
   async function holdSeats() {
-    if (!token) { setNotice({ kind: 'error', text: 'Sign in to hold seats.' }); return; }
+    if (!token) { setLoginPrompt(true); return; }
     if (!selectedShow || selectedSeats.length === 0) return;
     setBusy(true); setNotice(null);
     try {
@@ -176,6 +224,30 @@ function App() {
       const result = await api(`/api/booking/bookings/${booking.bookingId}/cancel`, { method: 'POST', token });
       setNotice({ kind: 'success', text: `Booking ${result.status.toLowerCase()}.` });
       await loadBookings(); if (selectedShow) await loadSeats(selectedShow.id);
+    } catch (error) { setNotice({ kind: 'error', text: error.message }); }
+    finally { setBusy(false); }
+  }
+
+  async function joinWaitlist() {
+    if (!token) { setLoginPrompt(true); return; }
+    if (!selectedShow) return;
+    setBusy(true);
+    try {
+      const data = await api(`/api/booking/shows/${encodeURIComponent(selectedShow.id)}/waitlist`, { method: 'POST', token, body: { quantity: waitlistQuantity } });
+      setWaitlistInfo(data);
+      setNotice({ kind: 'success', text: data.offeredSeatIds?.length ? `Your offer is ready for ${data.offeredSeatIds.join(', ')}.` : `Joined the show waitlist for ${waitlistQuantity} seat${waitlistQuantity === 1 ? '' : 's'}. You are number ${data.position}.` });
+    } catch (error) { setNotice({ kind: 'error', text: error.message }); }
+    finally { setBusy(false); }
+  }
+
+  async function acceptWaitlistOffer() {
+    setBusy(true);
+    try {
+      const result = await api(`/api/booking/shows/${encodeURIComponent(selectedShow.id)}/waitlist/accept`, { method: 'POST', token });
+      setWaitlistInfo(null);
+      setActiveBooking(result);
+      setNotice({ kind: 'success', text: `Offer accepted. Seats ${result.seatIds.join(', ')} are held for five minutes; complete payment in Bookings.` });
+      await Promise.all([loadSeats(selectedShow.id), loadBookings()]);
     } catch (error) { setNotice({ kind: 'error', text: error.message }); }
     finally { setBusy(false); }
   }
@@ -238,6 +310,14 @@ function App() {
               return <button key={seat.seatId} title={`${seat.seatId} · ${seat.status}`} aria-label={`${section.name}, row ${seat.row}, seat ${seat.seatNumber}, ${chosen ? 'selected' : seat.status.toLowerCase()}`} disabled={seat.status !== 'AVAILABLE'} className={`seat ${seat.status.toLowerCase()} ${chosen ? 'selected' : ''}`} onClick={() => toggleSeat(seat)}>{seat.seatNumber}</button>;
             })}</div><span className="row-label">{row}</span></div>)}</div>)}</div>
             <div className="seat-actions"><div><strong>{selectedSeats.length} selected</strong><span>{selectedSeats.length ? money(selectedTotal, selectedCurrency) : 'Choose up to 8 seats'}</span></div><button className="primary-button" onClick={holdSeats} disabled={busy || !selectedSeats.length}>{busy ? 'Working…' : 'Hold selected seats'} <span>→</span></button></div>
+            <section className="realtime-panel" aria-label="Live show features">
+              <div className="realtime-heading"><div><span className="eyebrow muted">PHASE 5 · LIVE SHOW</span><h3>Audience & waitlist</h3></div><span className="viewer-count"><i />{presence} viewing now</span></div>
+              {!user ? <p className="realtime-hint">Sign in to join the waitlist. Presence updates automatically while this show is open.</p> : <>
+                <div className="waitlist-join"><label htmlFor="waitlist-quantity">Number of seats</label><select id="waitlist-quantity" value={waitlistQuantity} onChange={event => setWaitlistQuantity(Number(event.target.value))}>{Array.from({ length: 8 }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1} seat{index ? 's' : ''}</option>)}</select><button className="primary-button small" disabled={busy} onClick={joinWaitlist}>{waitlistInfo ? 'Update my request' : 'Join waitlist'} →</button></div>
+                {waitlistInfo && <div className="waitlist-list"><div className="waitlist-item"><div><strong>{waitlistInfo.offeredSeatIds?.length ? `Your seats are ready: ${waitlistInfo.offeredSeatIds.join(', ')}` : `You’re in the show-wide queue`}</strong><span>{waitlistInfo.offeredSeatIds?.length ? `Offer expires ${new Date(waitlistInfo.offerExpiresAtEpochMillis).toLocaleTimeString()}` : `Position ${waitlistInfo.position} · approximate wait ${Math.ceil((waitlistInfo.estimatedWaitSeconds || 0) / 60)} min · ${waitlistInfo.quantity} seat${waitlistInfo.quantity === 1 ? '' : 's'}`}</span></div>{waitlistInfo.offeredSeatIds?.length > 0 && <button className="primary-button small" disabled={busy} onClick={acceptWaitlistOffer}>Accept offer →</button>}</div></div>}
+              </>}
+              <div className="live-feed"><strong>Live updates</strong>{liveEvents.length === 0 ? <span className="realtime-hint">Waiting for show activity…</span> : liveEvents.map(event => <div className="live-event" key={event.id}><i /> <span>{event.type.replaceAll('.', ' ')}{event.details.seatIds?.length ? ` · seats ${event.details.seatIds.join(', ')}` : event.details.seatId ? ` · seat ${event.details.seatId}` : ''}</span><small>{new Date(Number(event.id.split('-')[0])).toLocaleTimeString()}</small></div>)}</div>
+            </section>
           </section>}
 
           {user && <section className="booking-panel"><div className="section-heading"><div><span className="eyebrow muted">YOUR ACTIVITY</span><h2>Bookings</h2></div><button className="quiet-button" onClick={loadBookings}>↻ Refresh</button></div>
@@ -246,7 +326,7 @@ function App() {
         </div>
 
         <aside className="side-column">
-          {!user ? <section className="auth-card"><div className="auth-top"><span className="eyebrow">YOUR NIGHT OUT</span><span className="auth-icon">↗</span></div><h2>{authMode === 'login' ? 'Get in the door.' : 'Join the list.'}</h2><p>{authMode === 'login' ? 'Sign in to hold seats and manage your bookings.' : 'Create an account to start booking.'}</p><form onSubmit={submitAuth}>
+          {!user ? <section className="auth-card" id="account-access"><div className="auth-top"><span className="eyebrow">YOUR NIGHT OUT</span><span className="auth-icon">↗</span></div><h2>{authMode === 'login' ? 'Get in the door.' : 'Join the list.'}</h2><p>{authMode === 'login' ? 'Sign in to hold seats and manage your bookings.' : 'Create an account to start booking.'}</p><form onSubmit={submitAuth}>
             {authMode === 'register' && <label>Display name<input required maxLength="80" autoComplete="name" value={form.displayName} onChange={event => setForm({ ...form, displayName: event.target.value })} placeholder="Your name" /></label>}
             <label>Email<input type="email" required autoComplete="email" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} /></label>
             <label>Password<input type="password" required minLength={authMode === 'register' ? 10 : 1} autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} /></label>
@@ -258,6 +338,7 @@ function App() {
       </section>
     </main>
 
+    {loginPrompt && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setLoginPrompt(false); }}><section className="login-prompt" role="dialog" aria-modal="true" aria-labelledby="login-prompt-title"><button className="modal-close" onClick={() => setLoginPrompt(false)} aria-label="Close">×</button><span className="eyebrow">ONE QUICK STEP</span><h2 id="login-prompt-title">Sign in to hold seats</h2><p>Your seat selection is still here. Sign in or create an account to place the hold.</p><div className="prompt-actions"><button className="primary-button" onClick={() => { setAuthMode('login'); setLoginPrompt(false); document.getElementById('account-access')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>Sign in →</button><button className="quiet-button" onClick={() => { setAuthMode('register'); setLoginPrompt(false); document.getElementById('account-access')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>Create account</button></div></section></div>}
     <footer><span>STAGEPASS · LOCAL DEVELOPMENT</span><span>Built to make live moments happen.</span></footer>
   </div>;
 }
