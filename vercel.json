@@ -11,7 +11,6 @@
       "root": "gateway/",
       "runtime": "container",
       "entrypoint": "Dockerfile.vercel",
-      "maxDuration": 300,
       "bindings": [
         { "type": "service", "service": "auth", "format": "url", "env": "AUTH_BASE_URL" },
         { "type": "service", "service": "catalog", "format": "url", "env": "CATALOG_BASE_URL" },
@@ -21,26 +20,22 @@
     "auth": {
       "root": "auth-service/",
       "runtime": "container",
-      "entrypoint": "Dockerfile.vercel",
-      "maxDuration": 60
+      "entrypoint": "Dockerfile.vercel"
     },
     "catalog": {
       "root": "catalog-service/",
       "runtime": "container",
-      "entrypoint": "Dockerfile.vercel",
-      "maxDuration": 60
+      "entrypoint": "Dockerfile.vercel"
     },
     "payment": {
       "root": "payment-service/",
       "runtime": "container",
-      "entrypoint": "Dockerfile.vercel",
-      "maxDuration": 60
+      "entrypoint": "Dockerfile.vercel"
     },
     "booking": {
       "root": "booking-node/",
       "runtime": "container",
       "entrypoint": "Dockerfile.vercel",
-      "maxDuration": 300,
       "bindings": [
         { "type": "service", "service": "catalog", "format": "url", "env": "CATALOG_BASE_URL" },
         { "type": "service", "service": "payment", "format": "url", "env": "PAYMENT_BASE_URL" }
