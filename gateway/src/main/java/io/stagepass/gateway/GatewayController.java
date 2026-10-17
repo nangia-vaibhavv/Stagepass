@@ -36,10 +36,21 @@ public class GatewayController {
     private final GatewayProperties properties;
     private final RestClient client;
     private final List<String> bookingNodes;
+    private final boolean usePublicVercelRoutes;
+    private final String internalServiceToken;
     private final AtomicInteger nextNode = new AtomicInteger();
 
     public GatewayController(GatewayProperties properties) {
         this.properties = properties;
+        String deploymentHost = System.getenv("VERCEL_URL");
+        this.usePublicVercelRoutes = deploymentHost != null && !deploymentHost.isBlank();
+        this.internalServiceToken = properties.getJwtSecret();
+        if (usePublicVercelRoutes) {
+            String origin = "https://" + deploymentHost;
+            properties.setAuthBaseUrl(origin + "/_internal/auth");
+            properties.setCatalogBaseUrl(origin + "/_internal/catalog");
+            properties.setBookingNodes(origin + "/_internal/booking");
+        }
         this.bookingNodes = List.of(properties.getBookingNodes().split(",")).stream().map(String::trim).filter(s -> !s.isEmpty()).toList();
         var http = java.net.http.HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
         var factory = new JdkClientHttpRequestFactory(http);
@@ -145,11 +156,14 @@ public class GatewayController {
         var names = request.getHeaderNames();
         while (names.hasMoreElements()) {
             String name = names.nextElement();
-            if (HOP_BY_HOP.contains(name.toLowerCase()) || name.equalsIgnoreCase("x-request-id")) continue;
+            if (HOP_BY_HOP.contains(name.toLowerCase()) || name.equalsIgnoreCase("x-request-id")
+                    || name.equalsIgnoreCase("x-stagepass-internal-token")) continue;
             var values = request.getHeaders(name);
             while (values.hasMoreElements()) headers.add(name, values.nextElement());
         }
         headers.set("X-Request-Id", requestId);
+        if (usePublicVercelRoutes && internalServiceToken != null)
+            headers.set("X-StagePass-Internal-Token", internalServiceToken);
     }
 
     private ResponseEntity<byte[]> gatewayError(HttpStatus status, String code) {

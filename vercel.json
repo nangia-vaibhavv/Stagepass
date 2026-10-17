@@ -10,12 +10,7 @@
     "gateway": {
       "root": "gateway/",
       "runtime": "container",
-      "entrypoint": "Dockerfile.vercel",
-      "bindings": [
-        { "type": "service", "service": "auth", "format": "url", "env": "AUTH_BASE_URL" },
-        { "type": "service", "service": "catalog", "format": "url", "env": "CATALOG_BASE_URL" },
-        { "type": "service", "service": "booking", "format": "url", "env": "BOOKING_SERVICE_URL" }
-      ]
+      "entrypoint": "Dockerfile.vercel"
     },
     "auth": {
       "root": "auth-service/",
@@ -35,14 +30,14 @@
     "booking": {
       "root": "booking-node/",
       "runtime": "container",
-      "entrypoint": "Dockerfile.vercel",
-      "bindings": [
-        { "type": "service", "service": "catalog", "format": "url", "env": "CATALOG_BASE_URL" },
-        { "type": "service", "service": "payment", "format": "url", "env": "PAYMENT_BASE_URL" }
-      ]
+      "entrypoint": "Dockerfile.vercel"
     }
   },
   "rewrites": [
+    { "source": "/_internal/auth/(.*)", "destination": { "service": "auth" } },
+    { "source": "/_internal/catalog/(.*)", "destination": { "service": "catalog" } },
+    { "source": "/_internal/booking/(.*)", "destination": { "service": "booking" } },
+    { "source": "/_internal/payment/(.*)", "destination": { "service": "payment" } },
     { "source": "/api/(.*)", "destination": { "service": "gateway" } },
     { "source": "/internal/payment-callback", "destination": { "service": "booking" } },
     { "source": "/(.*)", "destination": { "service": "web" } }

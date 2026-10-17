@@ -1,7 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -10,6 +10,16 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const port = Number(process.env.PORT || 8081);
 const secret = process.env.JWT_SECRET;
 if (!secret || secret.length < 32) throw new Error('JWT_SECRET must contain at least 32 characters');
+const internalPrefix = '/_internal/auth';
+app.use((req, res, next) => {
+  if (!process.env.VERCEL_URL || !(req.path === internalPrefix || req.path.startsWith(`${internalPrefix}/`))) return next();
+  const received = Buffer.from(req.get('X-StagePass-Internal-Token') || '');
+  const expected = Buffer.from(secret);
+  if (received.length !== expected.length || !timingSafeEqual(received, expected))
+    return res.status(401).json({ code: 'UNAUTHORIZED_SERVICE' });
+  req.url = req.url.slice(internalPrefix.length) || '/';
+  next();
+});
 app.use(express.json({ limit: '16kb' }));
 
 app.get('/health', async (_req, res) => {

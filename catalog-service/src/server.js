@@ -1,10 +1,21 @@
 import express from 'express';
+import { timingSafeEqual } from 'node:crypto';
 import pg from 'pg';
 
 const { Pool } = pg;
 const app = express();
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const port = Number(process.env.PORT || 8082);
+const internalPrefix = '/_internal/catalog';
+app.use((req, res, next) => {
+  if (!process.env.VERCEL_URL || !(req.path === internalPrefix || req.path.startsWith(`${internalPrefix}/`))) return next();
+  const received = Buffer.from(req.get('X-StagePass-Internal-Token') || '');
+  const expected = Buffer.from(process.env.JWT_SECRET || '');
+  if (received.length !== expected.length || expected.length === 0 || !timingSafeEqual(received, expected))
+    return res.status(401).json({ code: 'UNAUTHORIZED_SERVICE' });
+  req.url = req.url.slice(internalPrefix.length) || '/';
+  next();
+});
 
 app.get('/health', async (_req, res) => {
   try { await pool.query('SELECT 1'); res.json({ status: 'ok', service: 'catalog' }); }

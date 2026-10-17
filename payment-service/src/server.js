@@ -13,6 +13,12 @@ const callbackDelayMs = Number(process.env.MOCK_LATE_CALLBACK_DELAY_MS || 5000);
 const callbackRetryMs = Number(process.env.PAYMENT_CALLBACK_RETRY_MS || 2000);
 if (!serviceToken || serviceToken.length < 24) throw new Error('PAYMENT_SERVICE_TOKEN must contain at least 24 characters');
 app.use(express.json({ limit: '16kb' }));
+const internalPrefix = '/_internal/payment';
+app.use((req, _res, next) => {
+  if (process.env.VERCEL_URL && (req.path === internalPrefix || req.path.startsWith(`${internalPrefix}/`)))
+    req.url = req.url.slice(internalPrefix.length) || '/';
+  next();
+});
 
 function authorize(req, res, next) {
   const received = req.get('X-Service-Token') || '';
