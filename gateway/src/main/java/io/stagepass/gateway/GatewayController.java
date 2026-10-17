@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -27,6 +29,7 @@ import org.springframework.web.client.RestClientException;
 
 @RestController
 public class GatewayController {
+    private static final Logger log = LoggerFactory.getLogger(GatewayController.class);
     private static final Set<String> HOP_BY_HOP = Set.of("connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
         "te", "trailer", "transfer-encoding", "upgrade", "host", "content-length", "proxy-connection",
         "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-prefix", "x-forwarded-proto", "x-real-ip");
@@ -113,9 +116,16 @@ public class GatewayController {
                     return ResponseEntity.status(incoming.getStatusCode()).headers(headers).body(incoming.getBody().readAllBytes());
                 });
         } catch (RestClientException | IllegalArgumentException error) {
+            log.warn("Gateway upstream request failed: service={}, host={}, method={}, requestId={}, errorType={}",
+                prefix, safeHost(baseUrl), request.getMethod(), requestId, error.getClass().getSimpleName());
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).header(HttpHeaders.CONTENT_TYPE, "application/json")
                 .header("X-Request-Id", requestId).body("{\"code\":\"UPSTREAM_UNAVAILABLE\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
+    }
+
+    private String safeHost(String baseUrl) {
+        try { return URI.create(baseUrl).getHost(); }
+        catch (IllegalArgumentException error) { return "<invalid-url>"; }
     }
 
     private void copyRequestHeaders(HttpServletRequest request, HttpHeaders headers, String requestId) {
