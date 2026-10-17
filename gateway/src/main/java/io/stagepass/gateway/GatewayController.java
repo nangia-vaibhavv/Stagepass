@@ -116,8 +116,11 @@ public class GatewayController {
                     return ResponseEntity.status(incoming.getStatusCode()).headers(headers).body(incoming.getBody().readAllBytes());
                 });
         } catch (RestClientException | IllegalArgumentException error) {
-            log.warn("Gateway upstream request failed: service={}, host={}, method={}, requestId={}, errorType={}",
-                prefix, safeHost(baseUrl), request.getMethod(), requestId, error.getClass().getSimpleName());
+            Throwable cause = error;
+            while (cause.getCause() != null && cause.getCause() != cause) cause = cause.getCause();
+            log.warn("Gateway upstream request failed: service={}, scheme={}, host={}, port={}, method={}, requestId={}, errorType={}, causeType={}",
+                prefix, safeScheme(baseUrl), safeHost(baseUrl), safePort(baseUrl), request.getMethod(), requestId,
+                error.getClass().getSimpleName(), cause.getClass().getSimpleName());
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).header(HttpHeaders.CONTENT_TYPE, "application/json")
                 .header("X-Request-Id", requestId).body("{\"code\":\"UPSTREAM_UNAVAILABLE\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
@@ -126,6 +129,16 @@ public class GatewayController {
     private String safeHost(String baseUrl) {
         try { return URI.create(baseUrl).getHost(); }
         catch (IllegalArgumentException error) { return "<invalid-url>"; }
+    }
+
+    private String safeScheme(String baseUrl) {
+        try { return URI.create(baseUrl).getScheme(); }
+        catch (IllegalArgumentException error) { return "<invalid-url>"; }
+    }
+
+    private int safePort(String baseUrl) {
+        try { return URI.create(baseUrl).getPort(); }
+        catch (IllegalArgumentException error) { return -1; }
     }
 
     private void copyRequestHeaders(HttpServletRequest request, HttpHeaders headers, String requestId) {
