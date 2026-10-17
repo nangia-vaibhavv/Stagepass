@@ -3,7 +3,7 @@ server:
 spring:
   data:
     redis:
-      url: ${SPRING_DATA_REDIS_URL:${REDIS_URL:redis://localhost:6379}}
+      url: ${SPRING_DATA_REDIS_URL:${SPRING_DATA_REDIS_REDIS_URL:${REDIS_URL:redis://localhost:6379}}}
       timeout: 2s
 stagepass:
   auth-base-url: ${AUTH_BASE_URL:http://localhost:8081}
