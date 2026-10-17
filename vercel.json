@@ -38,6 +38,9 @@
     { "source": "/_internal/catalog/(.*)", "destination": { "service": "catalog" } },
     { "source": "/_internal/booking/(.*)", "destination": { "service": "booking" } },
     { "source": "/_internal/payment/(.*)", "destination": { "service": "payment" } },
+    { "source": "/api/auth/(.*)", "destination": { "service": "auth" } },
+    { "source": "/api/catalog/(.*)", "destination": { "service": "catalog" } },
+    { "source": "/api/booking/(.*)", "destination": { "service": "booking" } },
     { "source": "/api/(.*)", "destination": { "service": "gateway" } },
     { "source": "/internal/payment-callback", "destination": { "service": "booking" } },
     { "source": "/(.*)", "destination": { "service": "web" } }

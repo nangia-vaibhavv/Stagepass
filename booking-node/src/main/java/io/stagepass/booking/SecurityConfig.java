@@ -69,32 +69,32 @@ public class SecurityConfig {
     @Bean
     @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
     FilterRegistrationBean<OncePerRequestFilter> internalServiceRouteFilter(@Value("${stagepass.jwt.secret}") String jwtSecret) {
-        String deploymentHost = System.getenv("VERCEL_URL");
         FilterRegistrationBean<OncePerRequestFilter> registration = new FilterRegistrationBean<>();
         registration.setFilter(new OncePerRequestFilter() {
-            private static final String PREFIX = "/_internal/booking";
+            private static final String INTERNAL_PREFIX = "/_internal/booking";
+            private static final String PUBLIC_PREFIX = "/api/booking";
 
             @Override
             protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
                     throws ServletException, IOException {
-                if (deploymentHost == null || deploymentHost.isBlank()) {
-                    chain.doFilter(request, response);
-                    return;
-                }
                 String requestUri = request.getRequestURI();
-                if (!(requestUri.equals(PREFIX) || requestUri.startsWith(PREFIX + "/"))) {
+                boolean internalRoute = hasPrefix(requestUri, INTERNAL_PREFIX);
+                String prefix = internalRoute ? INTERNAL_PREFIX : hasPrefix(requestUri, PUBLIC_PREFIX) ? PUBLIC_PREFIX : null;
+                if (prefix == null) {
                     chain.doFilter(request, response);
                     return;
                 }
-                byte[] expected = jwtSecret.getBytes(StandardCharsets.UTF_8);
-                byte[] received = request.getHeader("X-StagePass-Internal-Token") == null ? new byte[0]
-                    : request.getHeader("X-StagePass-Internal-Token").getBytes(StandardCharsets.UTF_8);
-                if (!MessageDigest.isEqual(expected, received)) {
-                    response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
-                    return;
+                if (internalRoute) {
+                    byte[] expected = jwtSecret.getBytes(StandardCharsets.UTF_8);
+                    byte[] received = request.getHeader("X-StagePass-Internal-Token") == null ? new byte[0]
+                        : request.getHeader("X-StagePass-Internal-Token").getBytes(StandardCharsets.UTF_8);
+                    if (!MessageDigest.isEqual(expected, received)) {
+                        response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
+                        return;
+                    }
                 }
-                String strippedUri = stripPrefix(requestUri);
-                String strippedServletPath = stripPrefix(request.getServletPath());
+                String strippedUri = stripPrefix(requestUri, prefix);
+                String strippedServletPath = stripPrefix(request.getServletPath(), prefix);
                 HttpServletRequestWrapper wrapped = new HttpServletRequestWrapper(request) {
                     @Override public String getRequestURI() { return strippedUri; }
                     @Override public String getServletPath() { return strippedServletPath; }
@@ -108,9 +108,13 @@ public class SecurityConfig {
                 chain.doFilter(wrapped, response);
             }
 
-            private String stripPrefix(String path) {
-                if (path == null || path.isEmpty() || !path.startsWith(PREFIX)) return path;
-                String remainder = path.substring(PREFIX.length());
+            private boolean hasPrefix(String path, String prefix) {
+                return path.equals(prefix) || path.startsWith(prefix + "/");
+            }
+
+            private String stripPrefix(String path, String prefix) {
+                if (path == null || path.isEmpty() || !hasPrefix(path, prefix)) return path;
+                String remainder = path.substring(prefix.length());
                 return remainder.isEmpty() ? "/" : remainder;
             }
         });
