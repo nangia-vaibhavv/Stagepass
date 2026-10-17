@@ -14,7 +14,7 @@
 | 0. Repository inspection and plan | Complete | Empty baseline inspected; plan committed as `9561b5f`. |
 | 1. Foundation, catalog, authentication, infrastructure | Complete | Compose, PostgreSQL/Redis, Flyway migrations, seeded catalog, auth/catalog APIs created. User manually confirmed Compose startup, catalog endpoints, and demo login worked. |
 | 2. Booking engine and payment workflow | Complete | Three Java booking nodes, Redis seat holds, booking state pattern, durable idempotency, Node mock payments, payment callback retry/refund, and integration smoke test. |
-| 3. Gateway and rate limiting | Not started | |
+| 3. Gateway and rate limiting | Complete | Java gateway proxies auth/catalog/booking APIs; validates JWTs, applies custom Redis Lua token-bucket and weighted sliding-window policies, emits rate-limit headers/429 responses, and exposes admin aggregate counters. |
 | 4. Consistent hashing and safe rebalancing | Not started | |
 | 5. Waitlist, presence, SSE, and domain events | Not started | |
 | 6. Notification worker | Not started | |
@@ -48,6 +48,18 @@
 - Requests from inside the frontend container through `/api/auth/health`, `/api/catalog/health`, `/api/booking/health`, and `/api/catalog/shows` returned HTTP 200.
 - Opened the UI in the browser and verified seeded shows, booking-node seat states, and seat selection render. The complete sign-in-to-confirm flow still needs a user walkthrough in the UI.
 
+## Phase 3 verification
+
+- `docker compose config -q`: passed.
+- `docker compose build gateway`: passed; 4 JUnit tests passed.
+- `docker compose up --build -d`: all services started; auth, catalog, Redis, booking nodes, payment, gateway, and frontend reported healthy.
+- Gateway API proxy checks: auth/catalog/booking health and seeded show listing returned HTTP 200; authenticated login and booking list returned HTTP 200; anonymous booking list returned HTTP 401; admin metrics returned HTTP 200 for the seeded admin.
+- Three consecutive booking health requests through the gateway reached booking nodes 2, 3, and 1, confirming temporary round-robin selection.
+- Eleven invalid login attempts from the gateway container returned ten HTTP 401 responses followed by HTTP 429 with `Retry-After` and `X-RateLimit-*` headers.
+- Six confirmation requests using a valid but ephemeral JWT and malformed booking UUID returned five HTTP 400 responses followed by HTTP 429. This exercised the token-bucket policy without writing a user or booking row.
+- Admin metrics showed allowed/blocked counts for login and confirmation rules.
+- Consistent-hash routing, health-based node selection, ownership fencing, and SSE streaming remain future work.
+
 ## Next step
 
-Walk through sign-in, hold, and mock confirmation in the pulled-forward frontend preview. Then implement Phase 3: Java gateway proxying, JWT validation, custom Redis-backed token-bucket/sliding-window rate limiters, metrics, and admin endpoints. Return to the rest of Phase 7 after waitlist, notification, and gateway APIs are available.
+Continue with Phase 4: implement the custom consistent-hash ring, virtual nodes, ownership epochs/fencing, node health-aware routing, and safe rebalance reporting. Return to the rest of Phase 7 after waitlist, notification, and gateway APIs are available.

@@ -1,22 +1,23 @@
 # StagePass
 
-StagePass is a local portfolio project for ticket sales under contention. PostgreSQL is the durable source of truth and Redis coordinates short-lived seat holds. Phases 0–2 provide infrastructure, authentication, catalog, a booking engine, and a mock payment service. A small React interface has been brought forward to make these backend flows easier to explore. Gateway routing, custom rate limiting, consistent hashing, waitlists, notifications, and the complete frontend remain future work.
+StagePass is a local portfolio project for ticket sales under contention. PostgreSQL is the durable source of truth and Redis coordinates short-lived seat holds and distributed rate limits. Phases 0–3 provide infrastructure, authentication, catalog, a booking engine, mock payments, a public API gateway, and a React interface for exploring the booking flow. Consistent hashing, waitlists, notifications, and the remaining frontend features are future work.
 
 ## Current status
 
-See [implementation status](docs/IMPLEMENTATION_STATUS.md) and [engineering plan](docs/ENGINEERING_PLAN.md). Phases 0–2 are implemented; the frontend MVP is in progress and pulled forward from Phase 7. Gateway routing/rate limiting, consistent hashing, waitlists/realtime, notifications, full frontend features, and load tests remain.
+See [implementation status](docs/IMPLEMENTATION_STATUS.md) and [engineering plan](docs/ENGINEERING_PLAN.md). Phases 0–3 are implemented; the frontend MVP is in progress and pulled forward from Phase 7. Consistent hashing, waitlists/realtime, notifications, full frontend features, and load tests remain.
 
 ## Services in the current phase
 
 | Service | Port | Owns | Current endpoints |
 | --- | ---: | --- | --- |
+| Gateway | 8080 | Public API routing, JWT validation, and custom rate limiting | `GET /health`, `/api/auth/**`, `/api/catalog/**`, `/api/booking/**`, `GET /admin/rate-limits` |
 | Auth service | 8081 | `auth` schema | `GET /health`, `POST /auth/register`, `POST /auth/login` |
 | Catalog service | 8082 | `catalog` schema | `GET /health`, `GET /shows`, `GET /shows/:showId`, `GET /shows/:showId/seats` |
 | Booking nodes (3) | 8091–8093 | `booking` schema | `GET /health`, `GET /shows/:showId/seats`, `POST /shows/:showId/holds`, `PUT /bookings/:id/extend`, `POST /bookings/:id/confirm`, `POST /bookings/:id/cancel`, `GET /bookings` |
 | Payment service | 8090 | `payment` schema | `GET /health`; internal intent, callback status, and refund endpoints |
 | Frontend | 5173 | Browser UI | React/Vite interface for shows, seats, holds, bookings, and mock checkout |
 | PostgreSQL | 5432 | Durable service schemas | Health checked by Compose |
-| Redis | 6379 | Future locks, rate limit state, presence, and events | AOF enabled |
+| Redis | 6379 | Booking holds and rate-limit state; presence and events are planned | AOF enabled |
 
 Registration accepts `{ "email", "password", "displayName" }`. Login accepts `{ "email", "password" }` and returns a one-hour HS256 JWT. A local-only admin account is seeded as `demo@stagepass.local` / `stagepass-demo`; change or remove it before exposing the service outside a local machine. Catalog listing supports `limit`, `cursor`, and `status`. Show and seat responses use deterministic seed IDs such as `show-aurora`.
 
@@ -30,11 +31,11 @@ Copy `.env.example` to `.env` and replace `JWT_SECRET` with a local secret of at
 docker compose up --build
 ```
 
-Compose starts PostgreSQL and Redis, runs service-owned Flyway migrations, and starts auth, catalog, payment, and three booking-node instances. Seed shows and seats are inserted by the catalog migration. PostgreSQL and Redis data persist in named volumes.
+Compose starts PostgreSQL and Redis, runs service-owned Flyway migrations, and starts auth, catalog, payment, the gateway, and three booking-node instances. Seed shows and seats are inserted by the catalog migration. PostgreSQL and Redis data persist in named volumes.
 
-Open [http://localhost:5173](http://localhost:5173) for the visual interface. It proxies browser API calls through its local Vite server to auth, catalog, and booking node 1, so the APIs do not need browser CORS configuration. The page shows service health, lists shows, displays live seat states, and lets you register/sign in, hold seats, extend/cancel bookings, and simulate success, decline, or delayed payment. It refreshes booking state to show asynchronous payment callbacks. Waitlists, SSE updates, admin dashboards, and gateway routing are not implemented yet.
+Open [http://localhost:5173](http://localhost:5173) for the visual interface. It proxies browser API calls through Vite to the public gateway at port 8080. The page shows service health, lists shows, displays live seat states, and lets you register/sign in, hold seats, extend/cancel bookings, and simulate success, decline, or delayed payment. It refreshes booking state to show asynchronous payment callbacks. Waitlists, SSE updates, and the admin dashboard are not implemented yet.
 
-For frontend-only development outside Docker, use `npm ci && npm run dev` inside `frontend/`; Vite proxies to `localhost:8081`, `localhost:8082`, and `localhost:8091` by default.
+For frontend-only development outside Docker, use `npm ci && npm run dev` inside `frontend/`; Vite proxies API calls to `localhost:8080` by default.
 
 Example requests:
 
@@ -45,6 +46,29 @@ curl -X POST http://localhost:8081/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"email":"demo@example.test","password":"local-demo-password","displayName":"Demo User"}'
 ```
+
+For public API examples, use the gateway prefixes. It rewrites login and registration to the auth service's `/auth/*` endpoints and strips `/api/catalog` or `/api/booking` before forwarding. For example:
+
+```sh
+curl http://localhost:8080/api/catalog/shows
+curl http://localhost:8080/api/booking/shows/show-copper/seats
+curl -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@stagepass.local","password":"stagepass-demo"}'
+```
+
+Protected booking endpoints require the same Bearer JWT as the booking node. The gateway verifies the HS256 signature and issuer before forwarding; the booking service verifies it again. Booking requests are temporarily distributed round-robin across all three nodes. Consistent-hash show ownership is a later phase.
+
+## Gateway rate limits
+
+The gateway uses Lua scripts in Redis for atomic distributed updates; no rate-limit library is used. YAML policies are in `gateway/src/main/resources/application.yml`:
+
+- Login and registration share a weighted sliding-window counter: 10 requests per 60 seconds per source IP.
+- Seat holds use a token bucket per authenticated user: burst of 5, replenished at 5 tokens per minute.
+- Confirmations use a separate token bucket per authenticated user with the same capacity/refill.
+- Other API calls use a weighted sliding-window counter: 120 requests per 60 seconds per authenticated user or source IP.
+
+Allowed API responses include `X-RateLimit-Rule`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`. Blocked requests return HTTP 429 and `Retry-After`. Login identity uses the gateway socket's remote address; client-supplied `X-Forwarded-For` and similar headers are ignored. The sliding-window counter weights the previous fixed window by the fraction of time remaining, so it approximates a true rolling window. `GET /admin/rate-limits` reports aggregate allowed/blocked counts and requires an admin JWT.
 
 To exercise booking with the seeded local user, log in and copy the returned `accessToken` into `TOKEN` in your shell:
 
@@ -90,7 +114,7 @@ The smoke test races two authenticated users for one seat, exercises hold extens
 ## Security and current limitations
 
 - Passwords are hashed with bcrypt. JWT signing requires `JWT_SECRET`; no secret is committed.
-- The booking node validates the same HS256 issuer and secret as auth; gateway-level JWT validation and public routing are later phases.
+- The gateway and booking nodes validate the same HS256 issuer and secret as auth; booking JWTs are checked at both layers.
 - Redis reduces hold contention, while `booking.confirmed_seats` has a durable `(show_id, seat_id)` primary key as the final duplicate-booking defense.
 - Payment is simulated. Synchronous confirmation and delayed callback paths use idempotency keys; the payment worker retries callbacks from durable PostgreSQL state, and callback processing is safe to redeliver. Refund compensation covers late success after cancellation/expiry and a database seat-uniqueness race.
 - The local payment service accepts only mock method tokens and must not be exposed as a real payment processor.

@@ -112,7 +112,7 @@ function App() {
   async function submitAuth(event) {
     event.preventDefault(); setBusy(true); setNotice(null);
     try {
-      const path = authMode === 'login' ? '/api/auth/auth/login' : '/api/auth/auth/register';
+      const path = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
       if (authMode === 'register') {
         await api(path, { method: 'POST', body: form });
         setAuthMode('login');

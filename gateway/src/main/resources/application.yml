@@ -1,0 +1,38 @@
+server:
+  port: 8080
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2s
+stagepass:
+  auth-base-url: ${AUTH_BASE_URL:http://localhost:8081}
+  catalog-base-url: ${CATALOG_BASE_URL:http://localhost:8082}
+  booking-nodes: ${BOOKING_NODES:http://localhost:8091,http://localhost:8092,http://localhost:8093}
+  jwt-secret: ${JWT_SECRET:replace-this-local-development-secret-with-at-least-32-characters}
+  jwt-issuer: ${JWT_ISSUER:stagepass}
+  rate-limits:
+    policies:
+      login:
+        strategy: sliding-window-counter
+        identity: ip
+        limit: 10
+        window: 60s
+      seat-hold:
+        strategy: token-bucket
+        identity: user
+        capacity: 5
+        refill-tokens: 5
+        refill-period: 60s
+      confirm:
+        strategy: token-bucket
+        identity: user
+        capacity: 5
+        refill-tokens: 5
+        refill-period: 60s
+      default:
+        strategy: sliding-window-counter
+        identity: caller
+        limit: 120
+        window: 60s

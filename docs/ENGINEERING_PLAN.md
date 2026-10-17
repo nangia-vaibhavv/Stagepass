@@ -29,7 +29,8 @@ The opened repository was empty and started with a new Git history. The current 
 - `stagepass:hold:{showId}:{seatId}` — token-valued expiring seat lock.
 - `stagepass:presence:{showId}:{viewerId}` — expiring viewer heartbeat.
 - `stagepass:waitlist:{showId}` — ordered waitlist entries.
-- `stagepass:ratelimit:{policy}:{identity}` — strategy-specific limiter state.
+- `stagepass:ratelimit:{policy}:{identityHash}` — strategy-specific limiter state; raw user IDs and IP addresses are not stored in the key.
+- `stagepass:ratelimit:metrics` — aggregate allowed/blocked counters by policy.
 - `stagepass:ownership:{showId}` — current owner and fencing epoch when ownership coordination uses Redis.
 - `stagepass:events` — domain event stream; consumer group `notification-workers`.
 
@@ -59,3 +60,11 @@ Complete one phase at a time: local infrastructure and catalog/auth; booking and
 - The initial React/Vite UI surfaces only behavior that already exists: login/registration, seeded show browsing, booking-node seat availability, holds, hold extension/cancellation, mock payment outcomes, and the user's bookings.
 - Vite proxies `/api/auth`, `/api/catalog`, and `/api/booking` to the local Compose services, avoiding direct cross-origin requests from the browser. The preview uses booking node 1; the API state is shared across all three booking nodes.
 - This is a learning and integration surface, not completion of Phase 7. Waitlists, SSE, the admin dashboard, gateway routing, and full realtime seat updates await their backend phases.
+
+## Phase 3 decisions
+
+- The gateway is the public API entry at port 8080. It maps `/api/auth/login` and `/api/auth/register` to the auth service's `/auth/*` paths and strips `/api/catalog` or `/api/booking` before proxying. Booking requests are round-robin distributed for now; the consistent-hash owner router is Phase 4.
+- The gateway validates the auth service's HS256 JWT signature and issuer for protected booking routes, then preserves the Authorization header for booking-node validation. Client-supplied forwarded-IP headers are stripped and are not used for limiter identity.
+- Rate limiting is a Strategy interface with token-bucket and weighted sliding-window-counter implementations. Redis Lua scripts make state updates atomic across gateway instances. Policies and thresholds are configured in YAML.
+- The weighted sliding-window counter estimates recent usage as `current + previous * (1 - elapsed/window)`. It is an approximation of a rolling window; token bucket gives burst capacity and continuous refill.
+- Aggregate allowed/blocked counts are kept in a Redis hash and exposed only to admin JWTs. Response headers report rule, limit, remaining count, and reset time; HTTP 429 includes Retry-After.
