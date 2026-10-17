@@ -12,12 +12,16 @@ const secret = process.env.JWT_SECRET;
 if (!secret || secret.length < 32) throw new Error('JWT_SECRET must contain at least 32 characters');
 const internalPrefix = '/_internal/auth';
 app.use((req, res, next) => {
-  if (!process.env.VERCEL_URL || !(req.path === internalPrefix || req.path.startsWith(`${internalPrefix}/`))) return next();
-  const received = Buffer.from(req.get('X-StagePass-Internal-Token') || '');
-  const expected = Buffer.from(secret);
-  if (received.length !== expected.length || !timingSafeEqual(received, expected))
-    return res.status(401).json({ code: 'UNAUTHORIZED_SERVICE' });
-  req.url = req.url.slice(internalPrefix.length) || '/';
+  if (req.path === internalPrefix || req.path.startsWith(`${internalPrefix}/`)) {
+    const received = Buffer.from(req.get('X-StagePass-Internal-Token') || '');
+    const expected = Buffer.from(secret);
+    if (received.length !== expected.length || !timingSafeEqual(received, expected))
+      return res.status(401).json({ code: 'UNAUTHORIZED_SERVICE' });
+    req.url = req.url.slice(internalPrefix.length) || '/';
+  } else if (req.path === '/api/auth' || req.path.startsWith('/api/auth/')) {
+    const suffix = req.url.slice('/api/auth'.length) || '/';
+    req.url = ['/login', '/register'].includes(suffix.split('?')[0]) ? `/auth${suffix}` : suffix;
+  }
   next();
 });
 app.use(express.json({ limit: '16kb' }));

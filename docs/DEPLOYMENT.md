@@ -51,7 +51,9 @@ Required production environment variables (set in the Vercel project dashboard, 
 
 The Neon schemas and migrations have been applied to the live `stagepass-prod` database. The verified query found `booking.outbox_events`, `catalog.shows`, 60 Boundary Hall seats, and 57 confirmed seats, leaving the requested 3 available. The production demo admin was removed. Read-only mode was restored after the migration. Keep secrets in Vercel and in a private local shell only.
 
-The gateway remains the public API entrypoint. The existing `frontend/vercel.json` is only the standalone frontend setup and does not deploy the backend. Do not call deployment complete until health routes and an end-to-end browser booking succeed.
+The existing `frontend/vercel.json` is only the standalone frontend setup and does not deploy the backend. Do not call deployment complete until health routes and an end-to-end browser booking succeed.
+
+**Temporary gateway bypass:** The Vercel rewrites currently route `/api/auth/*`, `/api/catalog/*`, and `/api/booking/*` directly to their respective services because gateway requests fail when Java rejects the TLS certificate on Vercel's private service URLs (`SunCertPathBuilderException`). This bypasses gateway rate limiting, including login/registration limits; booking endpoints still validate JWTs. Remove these three rewrites and the matching Vercel path handling in the services once gateway-to-service calls work, then verify all public flows through the gateway again.
 
 With frontend and API under the same Vercel deployment origin, configure same-origin API routing so browser CORS is not needed. If the backend is instead deployed on OCI, set `CORS_ALLOWED_ORIGINS` to the exact frontend origin; do not allow every `*.vercel.app` origin for a long-lived public demo.
 

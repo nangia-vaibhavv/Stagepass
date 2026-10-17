@@ -51,7 +51,7 @@ curl -X POST http://localhost:8081/auth/register \
   -d '{"email":"demo@example.test","password":"local-demo-password","displayName":"Demo User"}'
 ```
 
-For public API examples, use the gateway prefixes. It rewrites login and registration to the auth service's `/auth/*` endpoints and strips `/api/catalog` or `/api/booking` before forwarding. For example:
+For local public API examples, use the gateway prefixes. It rewrites login and registration to the auth service's `/auth/*` endpoints and strips `/api/catalog` or `/api/booking` before forwarding. Vercel temporarily routes auth, catalog, and booking API prefixes directly to their services while the gateway is unavailable; this bypasses gateway rate limiting. For example:
 
 ```sh
 curl http://localhost:8080/api/catalog/shows

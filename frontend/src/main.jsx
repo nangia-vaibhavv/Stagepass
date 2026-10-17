@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -40,7 +40,8 @@ function App() {
   const [user, setUser] = useState(initialUser);
   const [shows, setShows] = useState([]);
   const [selectedShow, setSelectedShow] = useState(null);
-  const [seats, setSeats] = useState([]);
+  const [seatInventory, setSeatInventory] = useState({ showId: null, seats: [] });
+  const [seatsLoading, setSeatsLoading] = useState(false);
   const [selectedSeats, setSelectedSeats] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [activeBooking, setActiveBooking] = useState(null);
@@ -55,6 +56,9 @@ function App() {
   const [loginPrompt, setLoginPrompt] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
+  const seatRequestSequence = useRef(0);
+  const selectedShowId = useRef(null);
+  const seats = seatInventory.showId === selectedShow?.id ? seatInventory.seats : [];
 
   const loadShows = useCallback(async () => {
     try {
@@ -73,10 +77,18 @@ function App() {
 
   const loadSeats = useCallback(async (showId) => {
     if (!showId) return;
+    const requestId = ++seatRequestSequence.current;
+    setSeatsLoading(true);
+    setSeatInventory({ showId, seats: [] });
     try {
-      setSeats(await api(`/api/booking/shows/${encodeURIComponent(showId)}/seats`));
+      const inventory = await api(`/api/booking/shows/${encodeURIComponent(showId)}/seats`, { cache: 'no-store' });
+      if (requestId === seatRequestSequence.current && selectedShowId.current === showId)
+        setSeatInventory({ showId, seats: inventory });
     } catch (error) {
-      setNotice({ kind: 'error', text: error.message });
+      if (requestId === seatRequestSequence.current && selectedShowId.current === showId)
+        setNotice({ kind: 'error', text: error.message });
+    } finally {
+      if (requestId === seatRequestSequence.current) setSeatsLoading(false);
     }
   }, []);
 
@@ -272,6 +284,15 @@ function App() {
       : current.length < 8 ? [...current, seat.seatId] : current);
   }
 
+  function selectShow(show) {
+    selectedShowId.current = show.id;
+    seatRequestSequence.current++;
+    setSeatInventory({ showId: null, seats: [] });
+    setSeatsLoading(false);
+    setSelectedShow(show);
+    setSelectedSeats([]);
+  }
+
   const selectedTotal = seats.filter(seat => selectedSeats.includes(seat.seatId)).reduce((sum, seat) => sum + seat.priceCents, 0);
   const selectedCurrency = selectedShow?.currency || 'USD';
   const activeStates = new Set(['HELD', 'PAYMENT_FAILED', 'PAYMENT_PENDING']);
@@ -296,7 +317,7 @@ function App() {
       <section className="content-grid" id="shows">
         <div className="main-column">
           <div className="section-heading"><div><span className="eyebrow muted">THE LINEUP</span><h2>Shows worth showing up for</h2></div><span className="count-label">{shows.length} events</span></div>
-          {shows.length === 0 ? <div className="empty-state">Loading seeded shows…</div> : <div className="show-grid">{shows.map((show, index) => <button className={`show-card ${selectedShow?.id === show.id ? 'chosen' : ''}`} key={show.id} onClick={() => { setSelectedShow(show); setSelectedSeats([]); }}>
+          {shows.length === 0 ? <div className="empty-state">Loading seeded shows…</div> : <div className="show-grid">{shows.map((show, index) => <button className={`show-card ${selectedShow?.id === show.id ? 'chosen' : ''}`} key={show.id} onClick={() => selectShow(show)}>
             <div className={`show-art art-${index % 3}`}><span className="show-art-label">{show.status === 'on_sale' ? 'ON SALE' : show.status?.replace('_', ' ')}</span><span className="show-art-index">0{index + 1}</span><span className="show-graphic">{['✳', '◉', '✦'][index % 3]}</span><span className="show-art-title">{show.artist}</span></div>
             <div className="show-card-info"><div><h3>{show.title}</h3><p>{show.venue_name} · {show.city}</p></div><span className="arrow-chip">↗</span></div>
             <div className="show-card-foot"><span>{prettyDate(show.starts_at)}</span><span>{show.seat_count} seats</span></div>
@@ -306,6 +327,8 @@ function App() {
             <div className="section-heading seat-heading"><div><span className="eyebrow muted">PICK YOUR SPOT</span><h2 id="seat-title">{selectedShow.title}</h2><p>{selectedShow.venue_name} · {prettyDate(selectedShow.starts_at)}</p></div><button className="quiet-button" onClick={() => loadSeats(selectedShow.id)}>↻ Refresh seats</button></div>
             <div className="seat-legend"><span><i className="legend-dot available" /> Available</span><span><i className="legend-dot selected" /> Selected</span><span><i className="legend-dot held" /> Held</span><span><i className="legend-dot confirmed" /> Booked</span></div>
             <div className="stage-label">STAGE</div>
+            {seatsLoading && <div className="empty-state compact">Loading seats for this show…</div>}
+            {!seatsLoading && groupedSeats.length === 0 && <div className="empty-state compact">No seats are currently available to display.</div>}
             <div className="seat-sections">{groupedSeats.map(([sectionId, section]) => <div className="seat-section" key={sectionId}><div className="section-label"><span>{section.name}</span><small>from {money(section.price, selectedCurrency)}</small></div>{[...section.rows.entries()].map(([row, rowSeats]) => <div className="seat-row" key={row}><span className="row-label">{row}</span><div className="seat-row-buttons">{rowSeats.map(seat => {
               const chosen = selectedSeats.includes(seat.seatId);
               return <button key={seat.seatId} title={`${seat.seatId} · ${seat.status}`} aria-label={`${section.name}, row ${seat.row}, seat ${seat.seatNumber}, ${chosen ? 'selected' : seat.status.toLowerCase()}`} disabled={seat.status !== 'AVAILABLE'} className={`seat ${seat.status.toLowerCase()} ${chosen ? 'selected' : ''}`} onClick={() => toggleSeat(seat)}>{seat.seatNumber}</button>;

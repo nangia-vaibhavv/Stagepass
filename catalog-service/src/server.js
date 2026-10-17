@@ -8,12 +8,15 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const port = Number(process.env.PORT || 8082);
 const internalPrefix = '/_internal/catalog';
 app.use((req, res, next) => {
-  if (!process.env.VERCEL_URL || !(req.path === internalPrefix || req.path.startsWith(`${internalPrefix}/`))) return next();
-  const received = Buffer.from(req.get('X-StagePass-Internal-Token') || '');
-  const expected = Buffer.from(process.env.JWT_SECRET || '');
-  if (received.length !== expected.length || expected.length === 0 || !timingSafeEqual(received, expected))
-    return res.status(401).json({ code: 'UNAUTHORIZED_SERVICE' });
-  req.url = req.url.slice(internalPrefix.length) || '/';
+  if (req.path === internalPrefix || req.path.startsWith(`${internalPrefix}/`)) {
+    const received = Buffer.from(req.get('X-StagePass-Internal-Token') || '');
+    const expected = Buffer.from(process.env.JWT_SECRET || '');
+    if (received.length !== expected.length || expected.length === 0 || !timingSafeEqual(received, expected))
+      return res.status(401).json({ code: 'UNAUTHORIZED_SERVICE' });
+    req.url = req.url.slice(internalPrefix.length) || '/';
+  } else if (req.path === '/api/catalog' || req.path.startsWith('/api/catalog/')) {
+    req.url = req.url.slice('/api/catalog'.length) || '/';
+  }
   next();
 });
 
