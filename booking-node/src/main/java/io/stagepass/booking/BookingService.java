@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.http.HttpStatus;
@@ -396,11 +397,20 @@ public class BookingService {
             (rs, row) -> new Object[] { rs.getString("id"), rs.getString("section_id"), rs.getString("section_name"),
                 rs.getString("row_label"), rs.getInt("seat_number"), rs.getInt("price_cents"), rs.getBoolean("confirmed") }, showId);
         if (seats.isEmpty()) throw BookingException.notFound("SHOW_NOT_FOUND", "Show was not found.");
+        List<Object> heldSeats = redis.executePipelined((RedisCallback<Object>) connection -> {
+            for (Object[] seat : seats) {
+                String seatId = (String) seat[0];
+                byte[] key = redis.getStringSerializer().serialize(holdKey(showId, seatId));
+                connection.keyCommands().exists(key);
+            }
+            return null;
+        });
         List<SeatView> result = new ArrayList<>();
-        for (Object[] seat : seats) {
+        for (int i = 0; i < seats.size(); i++) {
+            Object[] seat = seats.get(i);
             String id = (String) seat[0];
             boolean confirmed = (boolean) seat[6];
-            String status = confirmed ? "CONFIRMED" : (Boolean.TRUE.equals(redis.hasKey(holdKey(showId, id))) ? "HELD" : "AVAILABLE");
+            String status = confirmed ? "CONFIRMED" : (Boolean.TRUE.equals(heldSeats.get(i)) ? "HELD" : "AVAILABLE");
             result.add(new SeatView(id, (String) seat[1], (String) seat[2], (String) seat[3], (int) seat[4], (int) seat[5], status));
         }
         return result;
