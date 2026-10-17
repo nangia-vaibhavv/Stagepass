@@ -6,8 +6,8 @@ This document is the current working brief for a new assistant continuing StageP
 
 - Repository: `/Users/vaibhavnangia/Documents/Projects/stagepass`
 - Branch: `master`
-- `HEAD` and `origin/master` currently point to `8f56139` (`feat(gateway): add routing and distributed rate limits`).
-- Phase 5 work is **local and uncommitted**. The user explicitly asked the assistant not to commit or push so they can inspect the changes. Do not commit, push, or reset this work unless the user asks.
+- `HEAD` and `origin/master` currently point to `233f670` (`adding waitlist changes`). The Phase 5 waitlist changes are committed and pushed.
+- The public deployment work began locally. The user has now explicitly asked to push the reviewed hosting changes and deploy them to Vercel; keep generated credentials out of Git and do not make unrelated commits.
 - The user's local `.env` is ignored by Git. Never copy secret values into docs or chat.
 - Phase 4 consistent-hash routing was implemented and then explicitly removed at the user's request. The gateway is back to Phase 3 round-robin routing. Do not reintroduce Phase 4 unless asked.
 - `booking-node/db/migration/V3__show_ownership.sql` is retained locally because that migration was already applied to the user's database. Its ownership table is unused. Do not delete or rewrite applied migrations.
@@ -16,7 +16,7 @@ This document is the current working brief for a new assistant continuing StageP
 
 StagePass is a local, portfolio-scale ticket booking platform for high-contention live-show sales. It uses a monorepo with React/Vite frontend, Java/Spring Boot gateway and three booking-node replicas, Node/Express catalog/auth/payment services, PostgreSQL, and Redis. PostgreSQL is the durable booking source of truth; Redis coordinates seat holds, rate limits, presence, the waitlist, and live events. Docker Compose is the supported local run path.
 
-The user wants a usable UI for learning and testing, simple explanations of what each phase accomplishes, and practical browser test steps. They chose normal React for the frontend. Keep the user's local work reviewable; don't push changes without being asked.
+The user wants a usable UI for learning and testing, a shareable public demo URL, simple explanations of what each phase accomplishes, and practical browser test steps. They chose normal React for the frontend. Keep new work reviewable; don't push changes without being asked.
 
 The broad original roadmap includes:
 
@@ -31,6 +31,22 @@ The broad original roadmap includes:
 9. Final hardening and documentation.
 
 See [ENGINEERING_PLAN.md](ENGINEERING_PLAN.md), [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md), and [PHASE5_API.md](PHASE5_API.md) for more detail.
+
+## New deployment request and current deployment state
+
+The user wants to make StagePass publicly accessible now at little or no cost, inspect the live PostgreSQL data, and continue adding features after deployment. They corrected the earlier assumption that Vercel was frontend-only: current official Vercel docs support HTTP container images, including Java, and a multi-service Beta. The latest direction is to investigate deploying the frontend and HTTP backend services on Vercel, with external managed PostgreSQL/Redis free tiers, keeping OCI as fallback if needed. `docs/DEPLOYMENT.md` records the caveats. This is still a portfolio demo, not real ticket sales.
+
+- Deployment target: Vercel Services for frontend/backend containers plus Vercel Daemons for background workers, using Neon PostgreSQL and Upstash Redis free tiers. Neon `stagepass-prod` exists in Singapore on the Free plan. Upstash Redis and the Vercel app project are not yet connected. Services and Daemons are Beta and Hobby quotas are finite. OCI Compose remains a fallback; never silently select a paid resource.
+- Root `vercel.json` defines the Vercel Services/Daemons layout. `frontend/vercel.json` remains for frontend-only hosting. Gateway CORS reads `CORS_ALLOWED_ORIGINS`; the full stack routes frontend API requests same-origin.
+- Neon `stagepass-prod` was provisioned through the Vercel Marketplace on its Free plan in Singapore, with Neon Auth and Realtime disabled. No Upstash Redis or Vercel app project has been connected; no public URL exists. The Vercel account is signed in on the browser and shows the Hobby plan. The Oracle VM creation form was left unsubmitted; no VM was created. The user explicitly authorized pushing the deployment changes as part of hosting.
+- Vercel is not yet a drop-in fit for the current runtime topology. `payment-service` polls callbacks every 500 ms; Spring booking nodes schedule hold expiry, outbox relay, and waitlist-offer expiry, and serve SSE. These background jobs need an always-running worker model; ordinary HTTP Function calls or Hobby Cron are not a safe replacement. Vercel Daemons may be an option but have finite Hobby active-CPU quota and cannot receive inbound HTTP. Review `docs/DEPLOYMENT.md` before more deployment changes.
+- The Vercel deployment layout is implemented locally: one booking HTTP service replaces three Compose replicas; booking expiry/outbox/waitlist cleanup run in a non-web Spring Daemon; delayed payment callback delivery is a separate Node Daemon; Vercel rewrites expose only frontend/API plus the authenticated payment callback route. `scripts/migrate-managed-db.sh` migrates all four schemas and disables the seeded production demo admin. Vercel Daemon quota is 10 Active CPU-hours/month on Hobby.
+- Deployment files added locally: `deploy/docker-compose.production.yml`, `deploy/Caddyfile`, `deploy/.env.production.example`, `frontend/Dockerfile.production`, `frontend/deploy/nginx.conf`, and `auth-service/db/migration/V2__optionally_disable_demo_admin.sql`.
+- The production Compose overlay removes public host ports from app services, retains PostgreSQL only on VM loopback for an SSH tunnel, builds a static React/Nginx image, and adds Caddy on ports 80/443. Set `DISABLE_DEMO_ADMIN=true` before the first production migration; migration V2 removes the known seeded admin. The frontend no longer pre-fills or displays that public demo password.
+- Deployment validation completed locally before latest CORS changes: merged production Compose `config -q` passed; all application images built with the production overlay; gateway Maven/JUnit build passed with 7 tests (3 for trusted proxy client-IP handling); production auth migrations passed against an isolated temporary PostgreSQL database and confirmed the seeded demo admin was removed. Latest Vercel frontend build and Compose config pass; run a gateway build/test for CORS changes when Docker is available. The app has not been deployed to a cloud VM and has no public URL. The auth V2 migration has not been applied to production. Keep `.env.production` private and never ask the user to paste secrets here.
+- Gateway IP rate-limiting ignores forwarded headers by default. Production overlay turns on `TRUST_PROXY_HEADERS` only behind Caddy; it uses the rightmost valid forwarded address and falls back to the socket address. No external proxy trust is enabled in the local Compose config.
+- To inspect hosted data, use DBeaver over SSH forward `15432 -> VM loopback 5432`; database/schema/table details are in `docs/DEPLOYMENT.md`. Make and copy off-VM database backups; do not `docker compose down -v`.
+- The user wants ongoing feature updates. First path is reviewed push then `git pull --ff-only` on the VM, backup, and Compose rebuild. Add a reviewed CI/CD deploy workflow later; do not add a live SSH deploy key workflow without user approval.
 
 ## What is implemented locally now
 
@@ -133,7 +149,7 @@ Use `git status --short` before editing. There may be other local Phase 5 change
 
 ## Appendix: Original project specification
 
-The following is the user's original project brief, included so a fresh assistant can recover the intended scope without access to this chat's attachment. Apply the later decisions documented above where they supersede the brief (especially: Phase 4 consistent hashing was removed at the user's request; do not commit or push without a new explicit request; React is required; the latest user-authored UI requirements are recorded above).
+The following is the user's original project brief, included so a fresh assistant can recover the intended scope without access to this chat's attachment. Apply the later decisions documented above where they supersede the brief (especially: Phase 4 consistent hashing was removed at the user's request; do not commit or push unless the user explicitly asks; React is required; the latest user-authored UI requirements are recorded above).
 
 # StagePass — End-to-End Distributed Ticket Booking Platform
 

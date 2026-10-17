@@ -28,7 +28,7 @@ services:
 
   migrate-auth:
     image: flyway/flyway:10.20.1
-    command: ["-url=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stagepass}", "-user=${POSTGRES_USER:-stagepass}", "-password=${POSTGRES_PASSWORD:-local-development-only}", "-schemas=auth", "-defaultSchema=auth", "-locations=filesystem:/flyway/sql", "migrate"]
+    command: ["-url=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stagepass}", "-user=${POSTGRES_USER:-stagepass}", "-password=${POSTGRES_PASSWORD:-local-development-only}", "-schemas=auth", "-defaultSchema=auth", "-placeholders.disableDemoAdmin=${DISABLE_DEMO_ADMIN:-false}", "-locations=filesystem:/flyway/sql", "migrate"]
     volumes: ["./auth-service/db/migration:/flyway/sql:ro"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -101,8 +101,7 @@ services:
   gateway:
     build: ./gateway
     environment:
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      SPRING_DATA_REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-replace-this-local-development-secret-with-at-least-32-characters}
       JWT_ISSUER: stagepass
       AUTH_BASE_URL: http://auth-service:8081
@@ -144,11 +143,10 @@ services:
     environment: &booking-env
       SERVER_PORT: 8091
       NODE_ID: booking-node-1
-      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stagepass}
+      DATABASE_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stagepass}
       DATABASE_USER: ${POSTGRES_USER:-stagepass}
       DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      SPRING_DATA_REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-replace-this-local-development-secret-with-at-least-32-characters}
       JWT_ISSUER: stagepass
       PAYMENT_BASE_URL: http://payment-service:8090

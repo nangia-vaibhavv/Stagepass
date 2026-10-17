@@ -1,17 +1,18 @@
 server:
-  port: 8080
+  port: ${PORT:8080}
 spring:
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
+      url: ${SPRING_DATA_REDIS_URL:${REDIS_URL:redis://localhost:6379}}
       timeout: 2s
 stagepass:
   auth-base-url: ${AUTH_BASE_URL:http://localhost:8081}
   catalog-base-url: ${CATALOG_BASE_URL:http://localhost:8082}
-  booking-nodes: ${BOOKING_NODES:http://localhost:8091,http://localhost:8092,http://localhost:8093}
+  booking-nodes: ${BOOKING_NODES:${BOOKING_SERVICE_URL:http://localhost:8091,http://localhost:8092,http://localhost:8093}}
   jwt-secret: ${JWT_SECRET:replace-this-local-development-secret-with-at-least-32-characters}
   jwt-issuer: ${JWT_ISSUER:stagepass}
+  trust-proxy-headers: ${TRUST_PROXY_HEADERS:false}
+  cors-allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
   rate-limits:
     policies:
       login:

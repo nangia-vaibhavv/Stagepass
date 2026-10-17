@@ -22,6 +22,15 @@
 | 8. Load tests and hardening | Not started | |
 | 9. Documentation and final verification | Not started | |
 
+## Public deployment preparation (new local work)
+
+- User wants a shareable public URL without AWS costs, live PostgreSQL inspection, and a path to deploy future feature updates.
+- Deployment direction is Vercel Services/Daemons with Neon PostgreSQL and Upstash Redis free tiers. A root `vercel.json` maps the React frontend, gateway, auth/catalog/payment, and booking service; two daemons run payment callback delivery and booking background jobs. Neon `stagepass-prod` was created on the Free plan in Singapore (`sin1`), with Auth and Realtime disabled. Upstash Redis, the Vercel app project, secrets, database migrations, and public deployment remain pending. OCI Compose remains a fallback. No OCI VM was created. This is a portfolio demo only, not real ticket sales.
+- No cloud account, VM, public IP, DNS name, or live deployment has been provisioned. The first public deployment still requires those account/host prerequisites.
+- Local deployment work adds a Vercel Services/Daemons configuration with dedicated `Dockerfile.vercel` builds, external database/Redis wiring, a Flyway managed-database migration script, production React/Nginx image, Caddy HTTPS entrypoint, production Compose overlay, private database port binding, CORS allow-list configuration, optional migration removal of the known demo admin, and separated payment callback worker. The gateway can trust client IP headers only when explicitly enabled behind trusted ingress; local behavior remains untrusted by default.
+- Verification passed: frontend production build (including Vercel-ready output); merged production Compose configuration; production-overlay build of all images; gateway Maven build and 7 JUnit tests before the latest CORS edit; production auth Flyway migrations against isolated temporary Postgres; Caddy config validation; `git diff --check`. The latest Vercel frontend build passed. The CORS edit still needs a gateway build/test. Don't claim this app is live until Vercel and the backend are deployed and the public URL has been checked externally.
+- Current Git baseline is `233f670` on `master` / `origin/master`; deployment preparation remains local until this requested deployment commit is published. The user has now explicitly asked to push the hosting changes.
+
 ## Phase 1 verification
 
 - Both JavaScript service files parsed with Node's module parser, both package manifests parsed as JSON, and `git diff --check` was clean.

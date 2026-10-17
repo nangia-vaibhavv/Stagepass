@@ -4,7 +4,9 @@ StagePass is a local portfolio project for ticket sales under contention. Postgr
 
 ## Current status
 
-See the [next-assistant handoff](docs/HANDOFF_NEXT_ASSISTANT.md), [implementation status](docs/IMPLEMENTATION_STATUS.md), [engineering plan](docs/ENGINEERING_PLAN.md), and the [Phase 5 API contract](docs/PHASE5_API.md). Phases 0–3 are implemented; Phase 5 backend and frontend work is in progress. Phase 4 routing is deferred. Notifications and load tests remain.
+See the [next-assistant handoff](docs/HANDOFF_NEXT_ASSISTANT.md), [implementation status](docs/IMPLEMENTATION_STATUS.md), [engineering plan](docs/ENGINEERING_PLAN.md), [public deployment guide](docs/DEPLOYMENT.md), and the [Phase 5 API contract](docs/PHASE5_API.md). Phases 0–3 are implemented; Phase 5 backend and frontend work is in progress. Phase 4 routing is deferred. Notifications and load tests remain.
+
+The repository has a Vercel Services configuration for the frontend, backend containers, and dedicated background workers. A free Neon PostgreSQL resource (`stagepass-prod`, Singapore) has been created. The Vercel project, Upstash Redis resource, production environment variables, migrations, and first public deployment still need setup. See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for current steps and status. The project is a portfolio demo, not real ticket sales.
 
 ## Services in the current phase
 
@@ -19,7 +21,7 @@ See the [next-assistant handoff](docs/HANDOFF_NEXT_ASSISTANT.md), [implementatio
 | PostgreSQL | 5432 | Durable service schemas | Health checked by Compose |
 | Redis | 6379 | Booking holds, rate-limit state, presence, waitlists, and event stream | AOF enabled |
 
-Registration accepts `{ "email", "password", "displayName" }`. Login accepts `{ "email", "password" }` and returns a one-hour HS256 JWT. A local-only admin account is seeded as `demo@stagepass.local` / `stagepass-demo`; change or remove it before exposing the service outside a local machine. Catalog listing supports `limit`, `cursor`, and `status`. Show and seat responses use deterministic seed IDs such as `show-aurora`.
+Registration accepts `{ "email", "password", "displayName" }`. Login accepts `{ "email", "password" }` and returns a one-hour HS256 JWT. A local development admin is seeded as `demo@stagepass.local` / `stagepass-demo`; never expose that password publicly. Production uses `DISABLE_DEMO_ADMIN=true` to remove it on a fresh production database. Catalog listing supports `limit`, `cursor`, and `status`. Show and seat responses use deterministic seed IDs such as `show-aurora`.
 
 Booking calls require `Authorization: Bearer <accessToken>`. Seat availability reports `AVAILABLE`, `HELD`, or `CONFIRMED`. A successful hold reserves 1–8 venue seats for five minutes using token-owned Redis keys. Confirmation requires `Idempotency-Key` and a mock token: `pm_test_success` succeeds, `pm_test_decline` returns a payment failure and retains the hold so the buyer can retry with a new idempotency key, and `pm_test_late_success` simulates a delayed callback. Late success after cancellation or expiry is refunded. No real card data is accepted or stored.
 

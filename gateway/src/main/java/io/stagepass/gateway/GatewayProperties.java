@@ -12,6 +12,8 @@ public class GatewayProperties {
     private String bookingNodes = "http://localhost:8091,http://localhost:8092,http://localhost:8093";
     private String jwtSecret;
     private String jwtIssuer = "stagepass";
+    private boolean trustProxyHeaders = false;
+    private String corsAllowedOrigins = "http://localhost:5173";
     private final RateLimits rateLimits = new RateLimits();
 
     public String getAuthBaseUrl() { return authBaseUrl; }
@@ -24,6 +26,10 @@ public class GatewayProperties {
     public void setJwtSecret(String jwtSecret) { this.jwtSecret = jwtSecret; }
     public String getJwtIssuer() { return jwtIssuer; }
     public void setJwtIssuer(String jwtIssuer) { this.jwtIssuer = jwtIssuer; }
+    public boolean isTrustProxyHeaders() { return trustProxyHeaders; }
+    public void setTrustProxyHeaders(boolean trustProxyHeaders) { this.trustProxyHeaders = trustProxyHeaders; }
+    public String getCorsAllowedOrigins() { return corsAllowedOrigins; }
+    public void setCorsAllowedOrigins(String corsAllowedOrigins) { this.corsAllowedOrigins = corsAllowedOrigins; }
     public RateLimits getRateLimits() { return rateLimits; }
 
     public static class RateLimits {

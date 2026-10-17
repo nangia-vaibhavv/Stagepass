@@ -1,0 +1,67 @@
+services:
+  postgres:
+    ports: !override
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    ports: !override []
+
+  auth-service:
+    ports: !override []
+
+  catalog-service:
+    ports: !override []
+
+  payment-service:
+    ports: !override []
+
+  booking-node-1:
+    ports: !override []
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms64m -Xmx384m"
+
+  booking-node-2:
+    ports: !override []
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms64m -Xmx384m"
+
+  booking-node-3:
+    ports: !override []
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms64m -Xmx384m"
+
+  gateway:
+    ports: !override []
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms64m -Xmx384m"
+      TRUST_PROXY_HEADERS: "true"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?Set CORS_ALLOWED_ORIGINS to the public site origin in deploy/.env.production}
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.production
+    ports: !override []
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      STAGEPASS_DOMAIN: ${STAGEPASS_DOMAIN:?Set STAGEPASS_DOMAIN in deploy/.env.production}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      gateway:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+
+volumes:
+  caddy_data:
+  caddy_config:

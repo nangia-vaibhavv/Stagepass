@@ -18,6 +18,7 @@ import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -37,6 +38,8 @@ public class RealtimeService implements MessageListener {
     private final StringRedisTemplate redis;
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
+    @Value("${stagepass.scheduling.enabled:true}")
+    private boolean schedulingEnabled;
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
 
     public RealtimeService(StringRedisTemplate redis, JdbcTemplate jdbc, ObjectMapper mapper) {
@@ -60,6 +63,7 @@ public class RealtimeService implements MessageListener {
 
     @Scheduled(fixedDelayString = "${stagepass.events.relay-delay-ms:500}")
     public void relayOutbox() {
+        if (!schedulingEnabled) return;
         var rows = jdbc.query("SELECT event_id,event_type,aggregate_id,occurred_at,schema_version,data::text AS data FROM booking.outbox_events WHERE published_at IS NULL ORDER BY created_at LIMIT 100",
             (rs, row) -> new DomainEvent(rs.getObject("event_id", UUID.class).toString(), rs.getString("event_type"),
                 rs.getString("aggregate_id"), rs.getTimestamp("occurred_at").toInstant(), rs.getInt("schema_version"), readMap(rs.getString("data"))));
@@ -205,6 +209,7 @@ public class RealtimeService implements MessageListener {
 
     @Scheduled(fixedDelayString = "${stagepass.waitlist.expiry-poll-ms:1000}")
     public void expireOffers() {
+        if (!schedulingEnabled) return;
         long now = System.currentTimeMillis();
         for (String showId : jdbc.query("SELECT id FROM catalog.shows", (rs, row) -> rs.getString(1))) {
             var offerMembers = redis.opsForSet().members("stagepass:waitlist:offer-members:" + showId);

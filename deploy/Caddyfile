@@ -1,0 +1,7 @@
+{$STAGEPASS_DOMAIN} {
+	encode zstd gzip
+
+	@api path /api/*
+	reverse_proxy @api gateway:8080
+	reverse_proxy frontend:8080
+}

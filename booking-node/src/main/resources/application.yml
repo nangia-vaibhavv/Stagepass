@@ -1,21 +1,22 @@
 server:
-  port: ${SERVER_PORT:8091}
+  port: ${PORT:${SERVER_PORT:8091}}
 spring:
   application:
     name: booking-node
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/stagepass}
-    username: ${DATABASE_USER:stagepass}
-    password: ${DATABASE_PASSWORD:local-development-only}
+    url: ${DATABASE_JDBC_URL:${DATABASE_URL:jdbc:postgresql://localhost:5432/stagepass}}
+    username: ${DATABASE_USER:${PGUSER:stagepass}}
+    password: ${DATABASE_PASSWORD:${PGPASSWORD:local-development-only}}
   flyway:
     enabled: false
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
+      url: ${SPRING_DATA_REDIS_URL:${REDIS_URL:redis://localhost:6379}}
   jackson:
     default-property-inclusion: non_null
 stagepass:
+  scheduling:
+    enabled: ${STAGEPASS_SCHEDULING_ENABLED:true}
   jwt:
     secret: ${JWT_SECRET}
     issuer: ${JWT_ISSUER:stagepass}

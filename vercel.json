@@ -1,0 +1,76 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "web": {
+      "root": "frontend/",
+      "framework": "vite",
+      "buildCommand": "npm run build",
+      "outputDirectory": "dist"
+    },
+    "gateway": {
+      "root": "gateway/",
+      "runtime": "container",
+      "entrypoint": "Dockerfile.vercel",
+      "memory": 2048,
+      "maxDuration": 300,
+      "bindings": [
+        { "type": "service", "service": "auth", "format": "url", "env": "AUTH_BASE_URL" },
+        { "type": "service", "service": "catalog", "format": "url", "env": "CATALOG_BASE_URL" },
+        { "type": "service", "service": "booking", "format": "url", "env": "BOOKING_SERVICE_URL" }
+      ]
+    },
+    "auth": {
+      "root": "auth-service/",
+      "runtime": "container",
+      "entrypoint": "Dockerfile.vercel",
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "catalog": {
+      "root": "catalog-service/",
+      "runtime": "container",
+      "entrypoint": "Dockerfile.vercel",
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "payment": {
+      "root": "payment-service/",
+      "runtime": "container",
+      "entrypoint": "Dockerfile.vercel",
+      "memory": 1024,
+      "maxDuration": 60
+    },
+    "booking": {
+      "root": "booking-node/",
+      "runtime": "container",
+      "entrypoint": "Dockerfile.vercel",
+      "memory": 2048,
+      "maxDuration": 300,
+      "bindings": [
+        { "type": "service", "service": "catalog", "format": "url", "env": "CATALOG_BASE_URL" },
+        { "type": "service", "service": "payment", "format": "url", "env": "PAYMENT_BASE_URL" }
+      ]
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": { "service": "gateway" } },
+    { "source": "/internal/payment-callback", "destination": { "service": "booking" } },
+    { "source": "/(.*)", "destination": { "service": "web" } }
+  ],
+  "daemons": {
+    "payment-callbacks": {
+      "root": "payment-service/",
+      "entrypoint": "Dockerfile.vercel",
+      "command": ["node", "src/callback-worker.js"],
+      "instances": { "bom1": 1 },
+      "resources": { "requests": { "memory": "1Gi" } }
+    },
+    "booking-jobs": {
+      "root": "booking-node/",
+      "entrypoint": "Dockerfile.worker",
+      "command": ["sh", "/app/start-vercel.sh", "--spring.main.web-application-type=none", "--stagepass.scheduling.enabled=true"],
+      "instances": { "bom1": 1 },
+      "resources": { "requests": { "memory": "1Gi" } }
+    }
+  }
+}

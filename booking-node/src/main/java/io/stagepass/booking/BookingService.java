@@ -47,6 +47,8 @@ public class BookingService {
     private final Duration holdTtl;
     private final String paymentToken;
     private final String callbackUrl;
+    @Value("${stagepass.scheduling.enabled:true}")
+    private boolean schedulingEnabled;
     private final RealtimeService realtime;
 
     public BookingService(JdbcTemplate jdbc, NamedParameterJdbcTemplate namedJdbc, StringRedisTemplate redis,
@@ -277,6 +279,7 @@ public class BookingService {
     @Scheduled(fixedDelayString = "${stagepass.booking.expiry-sweep-ms:5000}")
     @Transactional
     public void expireDueBookings() {
+        if (!schedulingEnabled) return;
         List<Session> due = jdbc.query(
             "SELECT id,show_id,user_id,state,hold_token,current_payment_id,expires_at,version FROM booking.sessions " +
                 "WHERE state IN ('HELD','PAYMENT_FAILED','PAYMENT_PENDING') AND expires_at<=now() " +

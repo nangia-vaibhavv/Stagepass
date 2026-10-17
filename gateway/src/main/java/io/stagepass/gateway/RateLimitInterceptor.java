@@ -2,6 +2,7 @@ package io.stagepass.gateway;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
+import java.net.InetAddress;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Map;
@@ -65,7 +66,19 @@ public class RateLimitInterceptor implements HandlerInterceptor {
                 return "user:" + jwt.getToken().getSubject();
         }
         // Never use X-Forwarded-For or other client-supplied identity headers here.
-        return "ip:" + request.getRemoteAddr();
+        return "ip:" + sourceIp(request, properties.isTrustProxyHeaders());
+    }
+
+    static String sourceIp(HttpServletRequest request, boolean trustProxyHeaders) {
+        if (!trustProxyHeaders) return request.getRemoteAddr();
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded == null || forwarded.isBlank()) return request.getRemoteAddr();
+        String[] chain = forwarded.split(",");
+        String candidate = chain[chain.length - 1].trim();
+        if (candidate.isEmpty() || candidate.length() > 64 || !candidate.matches("[0-9a-fA-F:.]+"))
+            return request.getRemoteAddr();
+        try { return InetAddress.getByName(candidate).getHostAddress(); }
+        catch (Exception invalidAddress) { return request.getRemoteAddr(); }
     }
 
     private String digest(String value) {

@@ -4,9 +4,10 @@ import './styles.css';
 
 const initialToken = localStorage.getItem('stagepass.accessToken') || '';
 const initialUser = JSON.parse(localStorage.getItem('stagepass.user') || 'null');
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
     ...options,
     headers: {
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
@@ -44,7 +45,7 @@ function App() {
   const [bookings, setBookings] = useState([]);
   const [activeBooking, setActiveBooking] = useState(null);
   const [authMode, setAuthMode] = useState('login');
-  const [form, setForm] = useState({ email: 'demo@stagepass.local', password: 'stagepass-demo', displayName: '' });
+  const [form, setForm] = useState({ email: '', password: '', displayName: '' });
   const [paymentToken, setPaymentToken] = useState('pm_test_success');
   const [services, setServices] = useState({ auth: false, catalog: false, booking: false });
   const [presence, setPresence] = useState(0);
@@ -115,7 +116,7 @@ function App() {
     setLiveEvents([]);
     refreshPresence();
     const timer = window.setInterval(refreshPresence, 10000);
-    const source = new EventSource(`/api/booking/shows/${showId}/events`);
+    const source = new EventSource(`${apiBaseUrl}/api/booking/shows/${showId}/events`);
     const eventTypes = ['seat.held', 'seat.booked', 'booking.confirmed', 'booking.cancelled', 'booking.expired', 'seat.released', 'waitlist.offered', 'waitlist.offer_expired', 'presence.count_updated'];
     const handlers = eventTypes.map(type => {
       const handler = event => {
@@ -331,7 +332,7 @@ function App() {
             <label>Email<input type="email" required autoComplete="email" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} /></label>
             <label>Password<input type="password" required minLength={authMode === 'register' ? 10 : 1} autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} /></label>
             <button className="primary-button auth-submit" disabled={busy}>{busy ? 'Please wait…' : authMode === 'login' ? 'Sign in' : 'Create account'} <span>→</span></button>
-          </form><button className="text-button" onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}>{authMode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}</button><div className="demo-hint"><span>DEMO LOGIN</span><code>demo@stagepass.local</code><code>stagepass-demo</code></div></section> : <section className="profile-card"><div className="profile-avatar">{(user.displayName || 'S').slice(0, 1).toUpperCase()}</div><span className="eyebrow">SIGNED IN AS</span><h2>{user.displayName}</h2><p>{user.email}</p><div className="profile-divider" /><div className="profile-stat"><span>My bookings</span><strong>{bookings.length}</strong></div><div className="profile-stat"><span>Confirmed</span><strong>{bookings.filter(item => item.status === 'CONFIRMED').length}</strong></div></section>}
+          </form><button className="text-button" onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}>{authMode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}</button></section> : <section className="profile-card"><div className="profile-avatar">{(user.displayName || 'S').slice(0, 1).toUpperCase()}</div><span className="eyebrow">SIGNED IN AS</span><h2>{user.displayName}</h2><p>{user.email}</p><div className="profile-divider" /><div className="profile-stat"><span>My bookings</span><strong>{bookings.length}</strong></div><div className="profile-stat"><span>Confirmed</span><strong>{bookings.filter(item => item.status === 'CONFIRMED').length}</strong></div></section>}
 
           <section className="how-card"><span className="eyebrow muted">HOW IT WORKS</span><div className="how-step"><span>01</span><div><strong>Pick your seats</strong><p>Available seats are shared across all three booking nodes.</p></div></div><div className="how-step"><span>02</span><div><strong>Lock in your hold</strong><p>A Redis-backed hold gives you five minutes to check out.</p></div></div><div className="how-step"><span>03</span><div><strong>Try mock checkout</strong><p>Use success, decline, or delayed payment to explore the flow.</p></div></div><div className="architecture-note"><span>✳</span><p>Every action here calls the running StagePass APIs. No sample bookings are fabricated.</p></div></section>
         </aside>
